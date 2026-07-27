@@ -1,0 +1,5 @@
+__pycache__/
+data/
+cv_runs/
+test_runs/
+ds_snn_mf_best.pt
