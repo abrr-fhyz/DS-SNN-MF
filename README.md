@@ -13,16 +13,16 @@ Most of the module names are fairly self-explanatory.
 - `config` maintains a single configuration class object to be used by all the modules
 - `main` is the primary orechestrator module that runs the entire pipeline
 - Other files include:
-    - `mri_preprocess` is the the MRI pre-processing layer that has not been tried yet
+    - `mri_preprocess` is the the MRI pre-processing layer, that processes on the t1-channel
     - `leaky_demo` produces a standard MLP baseline on a leaky run of the OASIS-2 clinical data
     - `baselines` produces a primitive Machine Learning (LR, RF) baseline on the dataset
     - `sanity_overfit` is a leftover testing script that was made to check if everything was working
 
 ## How to use
-For most purposes, run `python3 main.py` from the root directory.
+For most purposes, run `python3 main.py` from the root directory for the primary training regime.
+Run `python3 mri_preprocess --offset 0 --limit 373` before hand to pre-process the MRI RAW Images.
 `.\docs\` include documents with further details regarding the overall mechanism.
-
-
+We assume a `.\data\oasis2` directory at the root, under which `OAS2_RAW_PART1`, `OAS2_RAW_PART2` and demographics data XLSX/CSV are placed. 
 
 
 ---

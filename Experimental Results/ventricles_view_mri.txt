@@ -1,0 +1,23 @@
+Device: cuda | ablation=mri | protocol=last-visit-only | kappa=0.12 | clin_lr=0.005 | mri_lr=0.0007 | blend=0.75 | aux_clin_only=True | mri_scale=0.12 | channels=(16, 32, 64) | share_enc=True | focalγ=1.0 | mri_in_ch=1 | views=['ventricles'] | processed=True | clinical=['Age', 'EDUC', 'SES', 'eTIV', 'nWBV', 'ASF', 'MF']
+Loading OASIS-2 sequences for 5-fold subject-level CV...
+  Subjects: 150 | final-label counts CN/MCI/AD = [73, 53, 24]
+========================================================================
+SUBJECT-LEVEL 5-FOLD CV SUMMARY  (mean ± std)
+========================================================================
+  Test accuracy                0.4200 ± 0.1121   folds=['0.500', '0.500', '0.467', '0.400', '0.233']
+  Test macro-F1                0.3342 ± 0.0898   folds=['0.410', '0.274', '0.449', '0.293', '0.245']
+  Test balanced accuracy       0.3662 ± 0.0830   folds=['0.419', '0.344', '0.478', '0.325', '0.265']
+  Test meanK                   0.0000 ± 0.0000   folds=['0.000', '0.000', '0.000', '0.000', '0.000']
+  Test high-conflict rate      0.0000 ± 0.0000   folds=['0.000', '0.000', '0.000', '0.000', '0.000']
+  Test mean soft-gate          0.0000 ± 0.0000   folds=['0.000', '0.000', '0.000', '0.000', '0.000']
+  Longitudinal (last-visit)    0.4200 ± 0.1121   folds=['0.500', '0.500', '0.467', '0.400', '0.233']
+  Longitudinal (Dempster)      0.3867 ± 0.0558   folds=['0.400', '0.333', '0.467', '0.400', '0.333']
+  Val accuracy (selected)      0.5444 ± 0.0724   folds=['0.611', '0.556', '0.611', '0.500', '0.444']
+  Val macro-F1 (selected)      0.5026 ± 0.0866   folds=['0.572', '0.473', '0.615', '0.439', '0.415']
+  Per-class F1 (test):
+    CN     0.5301 ± 0.1774   folds=['0.710', '0.667', '0.533', '0.480', '0.261']
+    MCI    0.2853 ± 0.1158   folds=['0.353', '0.154', '0.353', '0.400', '0.167']
+    AD     0.1872 ± 0.2002   folds=['0.167', '0.000', '0.462', '0.000', '0.308']
+------------------------------------------------------------------------
+  Folds with macro-F1 ≥ RF baseline (0.519): 0/5
+========================================================================
