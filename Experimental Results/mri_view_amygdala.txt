@@ -1,0 +1,27 @@
+Device: cuda | ablation=mri | protocol=last-visit-only | kappa=0.12 | clin_lr=0.005 | mri_lr=0.0007 | blend=0.75 | aux_clin_only=True | mri_scale=0.12 | channels=(16, 32, 64) | share_enc=True | focalγ=1.0 | mri_in_ch=1 | views=['amygdala'] | processed=True | clinical=['Age', 'EDUC', 'SES', 'eTIV', 'nWBV', 'ASF', 'MF']
+Loading OASIS-2 sequences for 5-fold subject-level CV...
+  Subjects: 150 | final-label counts CN/MCI/AD = [73, 53, 24]
+========================================================================
+SUBJECT-LEVEL 5-FOLD CV SUMMARY  (mean ± std)
+========================================================================
+  Test accuracy                0.5400 ± 0.0435   folds=['0.567', '0.533', '0.467', '0.567', '0.567']
+  Test macro-F1                0.4589 ± 0.0686   folds=['0.417', '0.367', '0.467', '0.538', '0.506']
+  Test balanced accuracy       0.4981 ± 0.0631   folds=['0.418', '0.444', '0.522', '0.559', '0.546']
+  Test meanK                   0.0000 ± 0.0000   folds=['0.000', '0.000', '0.000', '0.000', '0.000']
+  Test high-conflict rate      0.0000 ± 0.0000   folds=['0.000', '0.000', '0.000', '0.000', '0.000']
+  Test mean soft-gate          0.0000 ± 0.0000   folds=['0.000', '0.000', '0.000', '0.000', '0.000']
+  Longitudinal (last-visit)    0.5400 ± 0.0435   folds=['0.567', '0.533', '0.467', '0.567', '0.567']
+  Longitudinal (Dempster)      0.4667 ± 0.1546   folds=['0.500', '0.533', '0.600', '0.200', '0.500']
+  Val accuracy (selected)      0.5667 ± 0.0724   folds=['0.611', '0.611', '0.611', '0.444', '0.556']
+  Val macro-F1 (selected)      0.4786 ± 0.0468   folds=['0.516', '0.463', '0.539', '0.436', '0.438']
+  Per-class F1 (test):
+    CN     0.6915 ± 0.0692   folds=['0.774', '0.700', '0.583', '0.714', '0.686']
+    MCI    0.2895 ± 0.1809   folds=['0.476', '0.000', '0.286', '0.400', '0.286']
+    AD     0.3958 ± 0.2285   folds=['0.000', '0.400', '0.533', '0.500', '0.545']
+------------------------------------------------------------------------
+  Folds with macro-F1 ≥ RF baseline (0.519): 1/5
+========================================================================
+Primary paper metric: Test macro-F1 and Test accuracy (mean ± std).
+Val numbers are for early-stopping only — do not report them as results.
+
+Wrote per-fold checkpoints + metrics to cv_runs/

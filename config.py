@@ -41,7 +41,7 @@ class Config:
     # 'full'     — multi-view MRI + clinical (default performance run)
     # 'clinical' — tabular only (fast RF-comparison diagnostic; minutes)
     # 'mri'      — MRI views only
-    ABLATION = 'mri'
+    ABLATION = 'full'
 
     # ── Spiking neural network ────────────────────────────────────────────
     # Capacity cut hard: two independent 4-stage SNNs were too big for OASIS-2.
@@ -64,8 +64,11 @@ class Config:
     VIEW_SHAPE = (64, 64, 64)
     MRI_VIEWS  = {
         #'whole': (0.00, 1.00, 0.00, 1.00, 0.00, 1.00),
-        'hippocampus': (0.28, 0.58, 0.32, 0.68, 0.22, 0.78),
-        'ventricles':  (0.38, 0.72, 0.38, 0.68, 0.38, 0.62),
+        #'hippocampus': (0.28, 0.58, 0.32, 0.68, 0.22, 0.78),
+        #'ventricles':  (0.38, 0.72, 0.38, 0.68, 0.38, 0.62),
+        #'mtl':      (0.22, 0.56, 0.28, 0.74, 0.18, 0.82),  
+        #
+        'amygdala': (0.30, 0.55, 0.45, 0.70, 0.25, 0.75),  
     }
     MRI_CENTER_CROP_FRAC = 0.08
     MRI_PERCENTILE_CLIP  = (1.0, 98.0)
@@ -94,13 +97,13 @@ class Config:
     USE_CLINICAL      = True
     CLINICAL_FEAT_DIM = 64
     CLINICAL_FIRST    = True          # clinical BBA is the initial mass
-    CLINICAL_LR       = 5e-3          # match stronger full-run recipe
+    CLINICAL_LR       = 7e-4          # match stronger full-run recipe
 
     # ── Dempster-Shafer ───────────────────────────────────────────────────
     EVIDENCE_CAP   = 18.0
     # Unaligned RAW MRI is weak: keep BBAs near-vacuous so full ≈ clinical until registered multi-view preprocess is available.
-    MRI_EVIDENCE_CAP   = 2.5
-    MRI_EVIDENCE_SCALE = 0.12
+    MRI_EVIDENCE_CAP   = 8.5 # from 2.5
+    MRI_EVIDENCE_SCALE = 0.4 # from 0.12
     # Soft Dempster↔Yager gate — restore operating band from better full run.
     CONFLICT_KAPPA = 0.12
     CONFLICT_REPORT_KAPPA = 0.20
@@ -109,7 +112,7 @@ class Config:
     AUX_CLINICAL_ONLY = True
 
     # Prefer clinical aux in the hard decision while MRI still trains via DS.
-    DECISION_BLEND = 0.75
+    DECISION_BLEND = 0.60 # from 0.75
 
     # ── Loss weights ──────────────────────────────────────────────────────
     # Sampler already balances class exposure ≈ 1/3. Do NOT also put full inv-freq weights in the loss — that double-counts and collapses to MCI.
