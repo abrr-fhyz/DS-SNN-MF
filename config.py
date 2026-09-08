@@ -58,9 +58,6 @@ class Config:
     SNN_BLOCKS_PER_STAGE = 1
 
     # ── MRI views / preprocessing ─────────────────────────────────────────
-    # INTERIM (no FSL / no overnight preprocess): whole-brain RAW only +
-    # brain-mask zeroing. Hippocampus/ventricle crops + GM/ROI channels need
-    # registered volumes from ``mri_preprocess.py`` (enable later).
     VIEW_SHAPE = (64, 64, 64)
     MRI_VIEWS  = {
         #'whole': (0.00, 1.00, 0.00, 1.00, 0.00, 1.00),
@@ -81,7 +78,7 @@ class Config:
     MRI_USE_ROI_PRIOR_CHANNELS = False
 
     MRI_CACHE_DIR = 'data/oasis2/cache_v5'  
-    MRI_ZERO_BACKGROUND = True             # cheap win: drop air/skull from encoder
+    MRI_ZERO_BACKGROUND = True             
 
     @staticmethod
     def mri_in_channels() -> int:
@@ -96,22 +93,20 @@ class Config:
     # ── Clinical branch ───────────────────────────────────────────────────
     USE_CLINICAL      = True
     CLINICAL_FEAT_DIM = 64
-    CLINICAL_FIRST    = True          # clinical BBA is the initial mass
-    CLINICAL_LR       = 7e-4          # match stronger full-run recipe
+    CLINICAL_FIRST    = True          
+    CLINICAL_LR       = 7e-4          
 
     # ── Dempster-Shafer ───────────────────────────────────────────────────
     EVIDENCE_CAP   = 18.0
     # Unaligned RAW MRI is weak: keep BBAs near-vacuous so full ≈ clinical until registered multi-view preprocess is available.
     MRI_EVIDENCE_CAP   = 8.5 # from 2.5
     MRI_EVIDENCE_SCALE = 0.4 # from 0.12
-    # Soft Dempster↔Yager gate — restore operating band from better full run.
+
     CONFLICT_KAPPA = 0.12
     CONFLICT_REPORT_KAPPA = 0.20
 
-    # Aux head: clinical features only when clinical is active.
     AUX_CLINICAL_ONLY = True
 
-    # Prefer clinical aux in the hard decision while MRI still trains via DS.
     DECISION_BLEND = 0.60 # from 0.75
 
     # ── Loss weights ──────────────────────────────────────────────────────
@@ -138,7 +133,7 @@ class Config:
     CHECKPOINT_WARMUP = 10
     MIN_EPOCHS        = 30
     PATIENCE          = 10
-    # Conservative selection (fix 5): reject lucky val peaks that don't agree with train, and never save a ckpt that misses a class on val.
+
     CKPT_REQUIRE_ALL_CLASSES = True
     CKPT_MAX_VAL_TRAIN_GAP   = 0.15   # reject if val_f1 - train_f1 > this
     CKPT_TRAIN_F1_WEIGHT     = 0.25   # score mixes in train macro-F1

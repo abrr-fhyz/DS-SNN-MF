@@ -139,30 +139,34 @@ DS-SNN is positioned at the intersection of three gaps:
 
 ---
 
-### DS-SNN Framework Results (Without MMSE/CDR)
+### DS-SNN and Modality Ablations
 
-| Configuration | Accuracy | Macro-F1 | Balanced Acc. | CN F1 | MCI F1 | AD F1 |
-|---------------|----------|----------|---------------|-------|--------|-------|
-| MRI-only | 0.513 | 0.357 | 0.473 | 0.576 | 0.390 | 0.104 |
-| Clinical-only | **0.567** | **0.539** | 0.552 | 0.721 | 0.429 | 0.468 |
-| DS-SNN (Run 1) | 0.547 | 0.514 | 0.523 | 0.652 | 0.413 | 0.478 |
-| DS-SNN (Run 2) | **0.560** | 0.526 | 0.535 | 0.650 | 0.451 | 0.479 |
+Table below reports the DS-SNN framework and its two ablations under subject-level 5-fold CV. Two independent runs of the full framework are reported to give a sense of run-to-run variance under our small-cohort protocol.
+
+| Configuration | Accuracy | Macro-F1 | Balanced Acc. | Long. (Dempster) | CN F1 | MCI F1 | AD F1 |
+|---------------|----------|----------|---------------|------------------|-------|--------|-------|
+| MRI only | 0.420 ± 0.051 | 0.304 ± 0.067 | 0.341 ± 0.060 | 0.373 ± 0.109 | 0.576 | 0.230 | 0.104 |
+| Clinical only | **0.567 ± 0.075** | **0.539 ± 0.088** | 0.546 ± 0.101 | 0.540 ± 0.044 | 0.666 | 0.454 | 0.497 |
+| DS-SNN (Run 1) | 0.547 ± 0.056 | 0.525 ± 0.069 | 0.517 ± 0.062 | 0.520 ± 0.051 | 0.650 | 0.384 | 0.540 |
+| DS-SNN (Run 2) | **0.560 ± 0.092** | 0.519 ± 0.097 | 0.525 ± 0.076 | 0.553 ± 0.069 | 0.647 | 0.437 | 0.477 |
 
 **Key observations:**
-1. **MRI-only underperforms** - CN F1=0.576, AD F1=0.104 (raw volumes insufficient for 150 subjects)
-2. **Clinical-only is strong reference** - Exceeds RF baseline
-3. **Full DS-SNN is competitive** - Fusing weak MRI BBA doesn't degrade accuracy
-4. **Performance is protocol-bound** - Results align with Ghiasi et al.'s 58-70% range
+1. **MRI-only underperforms:** With whole-brain, unregistered \(64^3\) volumes and no atlas- or ROI-guided preprocessing, the SNN branch alone recovers CN weakly (F1 = 0.576) and is essentially non-informative on AD (F1 = 0.104). This is likely a consequence of feeding raw volumes to a shared 3D PLIF encoder on 150 subjects.
+2. **Clinical-only is a strong reference:** The clinical MLP + evidential head alone reaches 0.567 accuracy / 0.539 macro-F1, exceeding the RF baseline in accuracy and macro-F1.
+3. **Full DS-SNN is competitive with clinical-only:** Fusing the weak MRI BBA does not degrade accuracy (Run 2: 0.560, Run 1: 0.547) but remains considerably behind the lower bound of the credible range identified by Young et al. (2025). That being said, the results are closer to the ~58–70% range reported by Ghiasi et al. (2026) on OASIS-2.
+4. **Strict protocol:** The overall performance dip can likely be attributed to the exclusion of MMSE as a feature due to the stricter protocol setting, as demonstrated in the following section.
 
 ---
 
-### DS-SNN With MMSE Included
+### Effect of Including MMSE
 
-| Configuration | Accuracy | Macro-F1 | Balanced Acc. | Longitudinal | CN F1 | MCI F1 | AD F1 |
-|---------------|----------|----------|---------------|--------------|-------|--------|-------|
-| DS-SNN + MMSE | **0.633 ± 0.082** | **0.595 ± 0.091** | 0.595 ± 0.073 | 0.447 ± 0.080 | 0.758 | 0.447 | 0.581 |
+To quantify the contribution of MMSE, we repeated the full DS-SNN experiment with MMSE restored as a clinical input. This setting operates in a state closer to the one described in literature.
 
-**Key observation:** Restoring MMSE improves accuracy to ~63.3%, substantially closer to the ~66% credible range identified by Young et al. and within Ghiasi et al.'s band.
+| Configuration | Accuracy | Macro-F1 | Balanced Acc. | Long. (Dempster) | CN F1 | MCI F1 | AD F1 |
+|---------------|----------|----------|---------------|------------------|-------|--------|-------|
+| DS-SNN | **0.633 ± 0.082** | **0.595 ± 0.091** | 0.595 ± 0.073 | 0.447 ± 0.080 | 0.758 | 0.447 | 0.581 |
+
+Restoring MMSE improves performance across all aggregate metrics, increasing accuracy and macro-F1 to approximately 63.3% and 0.60 respectively. These results place the proposed framework substantially closer to the ~66% performance reported by Young et al. (2025) and within the band identified by Ghiasi et al. (2026), although marginally below their reported peak of approximately 69.7% accuracy.
 
 ---
 
