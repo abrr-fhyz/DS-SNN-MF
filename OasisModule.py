@@ -9,18 +9,20 @@ from scipy.ndimage import zoom
 from typing import Dict, List, Optional, Tuple
 from torch import Tensor
 from torch.utils.data import Dataset
+from sklearn.model_selection import StratifiedKFold, train_test_split
 
 from config import Config
 
 cfg = Config()
-
 _PART_DIRS   = ('OAS2_RAW_PART1', 'OAS2_RAW_PART2')
 _CLINICAL_COLS = cfg.CLINICAL_COLS
 
+# ──────────────────────────────────────────────────────────────
+# Clinical Pre-processing Util
+# ──────────────────────────────────────────────────────────────
 
 def _cdr_to_label(cdr) -> Optional[int]:
     """Per-visit CDR → 3-class label. Returns None for missing CDR.
-
         CDR 0.0 → CN (0),  CDR 0.5 → MCI (1),  CDR ≥ 1 → AD (2)
     """
     if cdr is None:
@@ -37,11 +39,9 @@ def _cdr_to_label(cdr) -> Optional[int]:
         return 1
     return 2
 
-
 def _clinical_value(row, col: str) -> float:
     """Extract one clinical feature. MF → {0=F, 1=M}; others numeric."""
     if col == 'MF':
-        # Spreadsheet may expose sex as MF / M/F / Sex.
         for key in ('MF', 'M/F', 'Sex', 'Gender'):
             if key in row.index and pd.notna(row[key]):
                 v = str(row[key]).strip().upper()
@@ -57,37 +57,23 @@ def _clinical_value(row, col: str) -> float:
             return np.nan
     return np.nan
 
-
 def subject_labels(sequences: List[List[dict]]) -> np.ndarray:
     """One label per subject = final (last) visit CDR class — for stratification."""
     return np.array([int(seq[-1]['label']) for seq in sequences], dtype=np.int64)
 
-
-def make_stratified_folds(sequences: List[List[dict]], n_folds: int = cfg.N_FOLDS,
-                          seed: int = cfg.SPLIT_SEED,
-                          val_frac: float = cfg.CV_VAL_FRAC
-                          ) -> List[Dict[str, np.ndarray]]:
+def make_stratified_folds(sequences: List[List[dict]], n_folds: int = cfg.N_FOLDS, seed: int = cfg.SPLIT_SEED, val_frac: float = cfg.CV_VAL_FRAC) -> List[Dict[str, np.ndarray]]:
     """Subject-level stratified k-fold splits.
-
-    For each fold i:
-      test  = fold i
-      from the remaining subjects, hold out ``val_frac`` (stratified) for
-      early-stopping; the rest is train.
-
-    Clinical normalisation MUST be fit on train indices only (done by the
-    dataset constructor / ``from_fold``).
+        For each fold i:
+            test  = fold i
+            from the remaining subjects, hold out ``val_frac`` (stratified) for
+            early-stopping; the rest is train..
     """
-    from sklearn.model_selection import StratifiedKFold, train_test_split
-
     y = subject_labels(sequences)
     idx = np.arange(len(sequences))
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
     folds = []
     for fold_i, (trainval_idx, test_idx) in enumerate(skf.split(idx, y)):
         y_tv = y[trainval_idx]
-        # Stratified train/val from the non-test subjects.
-        # train_test_split wants at least 2 per class in both sides; with tiny
-        # AD counts, fall back to a plain shuffle if stratification fails.
         try:
             tr, va = train_test_split(
                 trainval_idx, test_size=val_frac, random_state=seed + fold_i,
@@ -105,6 +91,10 @@ def make_stratified_folds(sequences: List[List[dict]], n_folds: int = cfg.N_FOLD
         })
     return folds
 
+
+# ──────────────────────────────────────────────────────────────
+# OASIS-2 Dataset Class
+# ──────────────────────────────────────────────────────────────
 
 class Oasis2Dataset(Dataset):
     """OASIS-2 longitudinal structural-MRI dataset.
@@ -130,15 +120,9 @@ class Oasis2Dataset(Dataset):
       2–3: hippocampus / ventricle priors (if MRI_USE_ROI_PRIOR_CHANNELS)
     Prefer ``MRI_PROCESSED_DIR`` tensors from ``mri_preprocess.py``.
     """
-
     CLASS_MAP = {'CN': 0, 'MCI': 1, 'AD': 2}
 
-    def __init__(self, split: str = 'train',
-                 dataset_dir: Path = cfg.OASIS2_DIR,
-                 csv_path: Path = cfg.OASIS2_CSV,
-                 max_visits: int = cfg.MAX_VISITS,
-                 fold_indices: Optional[Dict[str, np.ndarray]] = None,
-                 all_sequences: Optional[List[List[dict]]] = None):
+    def __init__(self, split: str = 'train', dataset_dir: Path = cfg.OASIS2_DIR, csv_path: Path = cfg.OASIS2_CSV, max_visits: int = cfg.MAX_VISITS, fold_indices: Optional[Dict[str, np.ndarray]] = None, all_sequences: Optional[List[List[dict]]] = None):
         self.split      = split
         self.data_dir   = Path(dataset_dir)
         self.csv_path   = Path(csv_path)
@@ -149,12 +133,9 @@ class Oasis2Dataset(Dataset):
 
         self._col_stats: Dict[str, Tuple[float, float]] = {}
 
-        # Reuse a pre-built sequence list across CV folds (avoids re-parsing CSV).
         if all_sequences is None:
             all_sequences = self._build_from_csv()
         else:
-            # Defensive copy of visit dicts so per-fold clinical norm doesn't
-            # leak across folds when the same list is reused.
             all_sequences = [
                 [{**v, 'clinical': np.array(v['clinical_raw'], dtype=np.float32)}
                  for v in seq]
@@ -171,9 +152,7 @@ class Oasis2Dataset(Dataset):
         self.sequences = [all_sequences[i] for i in split_idx[self.split]]
 
     @classmethod
-    def load_all_sequences(cls, dataset_dir: Path = cfg.OASIS2_DIR,
-                           csv_path: Path = cfg.OASIS2_CSV,
-                           max_visits: int = cfg.MAX_VISITS) -> List[List[dict]]:
+    def load_all_sequences(cls, dataset_dir: Path = cfg.OASIS2_DIR, csv_path: Path = cfg.OASIS2_CSV, max_visits: int = cfg.MAX_VISITS) -> List[List[dict]]:
         """Parse CSV + resolve MRI paths once (for CV)."""
         tmp = cls.__new__(cls)
         tmp.data_dir   = Path(dataset_dir)
@@ -218,7 +197,6 @@ class Oasis2Dataset(Dataset):
         mri_path = self._normalise_analyze_pair(visit['mri_path'])
         mri = self._load_nifti(mri_path, cfg.MRI_SHAPE)  # (1,D,H,W)
         if bool(getattr(cfg, 'MRI_USE_GM_CHANNEL', False)):
-            # On-the-fly GM proxy from intensity (weaker than preprocess GM).
             gm = self._soft_gm_from_t1(mri[0].numpy())
             mri = torch.cat([mri, torch.from_numpy(gm).unsqueeze(0)], dim=0)
         return self._append_roi_priors(mri)
@@ -240,7 +218,6 @@ class Oasis2Dataset(Dataset):
             return None
         if not isinstance(tensor, torch.Tensor) or tensor.ndim != 4:
             return None
-        # Ensure channel layout matches config (T1 required; GM optional in file).
         want_gm = bool(getattr(cfg, 'MRI_USE_GM_CHANNEL', False))
         if want_gm and tensor.shape[0] == 1:
             gm = self._soft_gm_from_t1(tensor[0].numpy())
@@ -284,9 +261,7 @@ class Oasis2Dataset(Dataset):
         return torch.cat([mri] + priors, dim=0)
 
     @staticmethod
-    def _soft_box_prior(D: int, H: int, W: int,
-                        box: Tuple[float, ...], sigma_frac: float = 0.08
-                        ) -> Tensor:
+    def _soft_box_prior(D: int, H: int, W: int, box: Tuple[float, ...], sigma_frac: float = 0.08) -> Tensor:
         """Gaussian blob centred on a fractional ROI box (values in [0,1])."""
         z0, z1, y0, y1, x0, x1 = box
         cz, cy, cx = 0.5 * (z0 + z1), 0.5 * (y0 + y1), 0.5 * (x0 + x1)

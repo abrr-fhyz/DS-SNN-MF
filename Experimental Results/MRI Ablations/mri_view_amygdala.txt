@@ -24,4 +24,28 @@ SUBJECT-LEVEL 5-FOLD CV SUMMARY  (mean ± std)
 Primary paper metric: Test macro-F1 and Test accuracy (mean ± std).
 Val numbers are for early-stopping only — do not report them as results.
 
-Wrote per-fold checkpoints + metrics to cv_runs/
+##### NO CLINICAL AUX
+Device: cuda | ablation=mri | protocol=last-visit-only | kappa=0.12 | clin_lr=0.0007 | mri_lr=0.0007 | blend=0.0 | aux_clin_only=True | mri_scale=1.0 | channels=(16, 32, 64) | share_enc=True | focalγ=1.0 | mri_in_ch=1 | views=['amygdala'] | processed=True | clinical=['Age', 'EDUC', 'SES', 'eTIV', 'nWBV', 'ASF', 'MF']
+Loading OASIS-2 sequences for 5-fold subject-level CV...
+  Subjects: 150 | final-label counts CN/MCI/AD = [73, 53, 24]
+
+========================================================================
+SUBJECT-LEVEL 5-FOLD CV SUMMARY  (mean ± std)
+========================================================================
+  Test accuracy                0.4933 ± 0.1535   folds=['0.233', '0.500', '0.633', '0.567', '0.533']
+  Test macro-F1                0.3923 ± 0.1445   folds=['0.193', '0.283', '0.509', '0.488', '0.487']
+  Test balanced accuracy       0.4269 ± 0.1414   folds=['0.217', '0.344', '0.511', '0.540', '0.523']
+  Test meanK                   0.0000 ± 0.0000   folds=['0.000', '0.000', '0.000', '0.000', '0.000']
+  Test high-conflict rate      0.0000 ± 0.0000   folds=['0.000', '0.000', '0.000', '0.000', '0.000']
+  Test mean soft-gate          0.0000 ± 0.0000   folds=['0.000', '0.000', '0.000', '0.000', '0.000']
+  Longitudinal (last-visit)    0.4933 ± 0.1535   folds=['0.233', '0.500', '0.633', '0.567', '0.533']
+  Longitudinal (Dempster)      0.5000 ± 0.0745   folds=['0.400', '0.467', '0.600', '0.500', '0.533']
+  Val accuracy (selected)      0.6222 ± 0.0465   folds=['0.667', '0.611', '0.667', '0.556', '0.611']
+  Val macro-F1 (selected)      0.5088 ± 0.0579   folds=['0.596', '0.542', '0.468', '0.473', '0.467']
+  Per-class F1 (test):
+    CN     0.6622 ± 0.1201   folds=['0.462', '0.683', '0.778', '0.722', '0.667']
+    MCI    0.2119 ± 0.1845   folds=['0.000', '0.167', '0.500', '0.143', '0.250']
+    AD     0.3026 ± 0.2627   folds=['0.118', '0.000', '0.250', '0.600', '0.545']
+------------------------------------------------------------------------
+  Folds with macro-F1 ≥ RF baseline (0.519): 0/5
+========================================================================

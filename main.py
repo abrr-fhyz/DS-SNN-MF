@@ -1,10 +1,9 @@
 import json
 import random
-from pathlib import Path
-
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+from pathlib import Path
 
 from config import Config
 from OasisModule import Oasis2Dataset, make_stratified_folds, subject_labels
@@ -13,25 +12,14 @@ from TrainerModule import Trainer, evaluate_longitudinal
 
 cfg = Config()
 
-
-def set_seed(seed: int = cfg.SEED):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-
 # ──────────────────────────────────────────────────────────────
 # Subject-level view: one sample per subject = final visit
-# (matches RF subject-final-visit baseline; avoids converter dilution)
 # ──────────────────────────────────────────────────────────────
+
 class CrossSectionalWrapper(Dataset):
     def __init__(self, oasis_dataset: Oasis2Dataset, augment: bool = False):
         self.oasis_dataset = oasis_dataset
         self.augment = augment
-        # One row per subject: last visit only (label = final CDR class).
         self.samples = [(seq[-1], int(seq[-1]['label']))
                         for seq in oasis_dataset.sequences]
 
@@ -80,6 +68,17 @@ class CrossSectionalWrapper(Dataset):
             counts[int(label)] += 1
         return counts
 
+# ──────────────────────────────────────────────────────────────
+# Utility functions
+# ──────────────────────────────────────────────────────────────
+
+def set_seed(seed: int = cfg.SEED):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def longitudinal_collate_fn(batch):
     """Pad each subject's visit sequence to the batch max and keep visit order."""
@@ -107,14 +106,12 @@ def longitudinal_collate_fn(batch):
         })
     return {'visits': visits_by_idx, 'label': labels}
 
-
 def _inv_freq_weights(counts):
     total = sum(counts)
     return torch.tensor(
         [total / (cfg.NUM_CLASSES * max(c, 1)) for c in counts],
         dtype=torch.float32,
     )
-
 
 def _param_groups(model: DSSNMMF):
     """Clinical / aux hot; MRI encoder + MRI DS heads cold (full / mri ablations)."""
@@ -137,7 +134,6 @@ def _param_groups(model: DSSNMMF):
     if cold:
         groups.append({'params': cold, 'lr': mri_lr})
     return groups
-
 
 def _make_loaders(train_seq, val_seq, test_seq):
     train_ds = CrossSectionalWrapper(train_seq, augment=True)
@@ -172,7 +168,6 @@ def _make_loaders(train_seq, val_seq, test_seq):
 
     return train_loader, val_loader, test_xs_loader, test_long_loader, class_weights, counts
 
-
 def _run_one_split(train_seq, val_seq, test_seq, device, save_path: str) -> dict:
     train_loader, val_loader, test_xs_loader, test_long_loader, class_weights, counts = \
         _make_loaders(train_seq, val_seq, test_seq)
@@ -187,7 +182,6 @@ def _run_one_split(train_seq, val_seq, test_seq, device, save_path: str) -> dict
     test_metrics = trainer.evaluate(test_xs_loader, verbose=True)
     long_metrics = evaluate_longitudinal(model, test_long_loader, device=device)
 
-    # Balanced accuracy from confusion matrix.
     cm = test_metrics['confusion']
     bal_acc = float(np.mean(np.diag(cm) / np.clip(cm.sum(axis=1), 1, None)))
 
@@ -217,7 +211,6 @@ def _run_one_split(train_seq, val_seq, test_seq, device, save_path: str) -> dict
           f"equal-Dempster accum: {result['longitudinal_acc_dempster']:.4f}")
     return result
 
-
 def _summarise(fold_results: list) -> dict:
     keys = ['test_acc', 'test_macro_f1', 'test_bal_acc', 'test_mean_K',
             'test_conflict_rate', 'test_mean_gate', 'longitudinal_acc',
@@ -228,7 +221,6 @@ def _summarise(fold_results: list) -> dict:
         summary[k] = {'mean': float(vals.mean()), 'std': float(vals.std(ddof=1)),
                       'folds': vals.tolist()}
 
-    # Per-class F1 mean±std
     pc = np.array([r['test_per_class_f1'] for r in fold_results], dtype=np.float64)
     summary['test_per_class_f1'] = {
         cfg.CLASSES[i]: {
@@ -239,7 +231,6 @@ def _summarise(fold_results: list) -> dict:
         for i in range(cfg.NUM_CLASSES)
     }
     return summary
-
 
 def _print_summary(summary: dict, n_folds: int):
     print("\n" + "=" * 72)
@@ -264,7 +255,6 @@ def _print_summary(summary: dict, n_folds: int):
         print(f"    {cname:<6} {s['mean']:.4f} ± {s['std']:.4f}   "
               f"folds={[f'{v:.3f}' for v in s['folds']]}")
 
-    # Compare to the sklearn RF tabular ceiling from baselines.py (~0.519).
     rf_f1 = 0.519
     f1_folds = summary['test_macro_f1']['folds']
     n_beat = sum(1 for v in f1_folds if v >= rf_f1)
@@ -275,7 +265,6 @@ def _print_summary(summary: dict, n_folds: int):
     print("Primary paper metric: Test macro-F1 and Test accuracy (mean ± std).")
     print("Val numbers are for early-stopping only — do not report them as results.")
 
-
 def run_cv(device: torch.device):
     print(f"Loading OASIS-2 sequences for {cfg.N_FOLDS}-fold subject-level CV...")
     all_sequences = Oasis2Dataset.load_all_sequences()
@@ -283,9 +272,7 @@ def run_cv(device: torch.device):
     print(f"  Subjects: {len(all_sequences)} | "
           f"final-label counts CN/MCI/AD = "
           f"{[int((y == c).sum()) for c in range(cfg.NUM_CLASSES)]}")
-
-    folds = make_stratified_folds(all_sequences, n_folds=cfg.N_FOLDS,
-                                  seed=cfg.SPLIT_SEED, val_frac=cfg.CV_VAL_FRAC)
+    folds = make_stratified_folds(all_sequences, n_folds=cfg.N_FOLDS, seed=cfg.SPLIT_SEED, val_frac=cfg.CV_VAL_FRAC)
     fold_results = []
     out_dir = Path("cv_runs")
     out_dir.mkdir(exist_ok=True)
@@ -296,14 +283,11 @@ def run_cv(device: torch.device):
               f"train={len(indices['train'])}  val={len(indices['val'])}  "
               f"test={len(indices['test'])}")
         print("#" * 72)
-        set_seed(cfg.SEED + fold_i)   # reproducible but distinct init per fold
+        set_seed(cfg.SEED + fold_i)
 
-        train_seq = Oasis2Dataset(split='train', fold_indices=indices,
-                                  all_sequences=all_sequences)
-        val_seq   = Oasis2Dataset(split='val',   fold_indices=indices,
-                                  all_sequences=all_sequences)
-        test_seq  = Oasis2Dataset(split='test',  fold_indices=indices,
-                                  all_sequences=all_sequences)
+        train_seq = Oasis2Dataset(split='train', fold_indices=indices, all_sequences=all_sequences)
+        val_seq   = Oasis2Dataset(split='val',   fold_indices=indices, all_sequences=all_sequences)
+        test_seq  = Oasis2Dataset(split='test',  fold_indices=indices, all_sequences=all_sequences)
 
         save_path = str(out_dir / f"fold{fold_i + 1}_best.pt")
         result = _run_one_split(train_seq, val_seq, test_seq, device, save_path)
@@ -321,7 +305,6 @@ def run_cv(device: torch.device):
     print(f"\nWrote per-fold checkpoints + metrics to {out_dir}/")
     return summary
 
-
 def run_single_split(device: torch.device):
     print("Running single subject-level train/val/test split (USE_CV=False)...")
     set_seed()
@@ -331,6 +314,9 @@ def run_single_split(device: torch.device):
     result = _run_one_split(train_seq, val_seq, test_seq, device, "ds_snn_mf_best.pt")
     return result
 
+# ──────────────────────────────────────────────────────────────
+# Main Function(s)
+# ──────────────────────────────────────────────────────────────
 
 def main():
     device = torch.device(cfg.DEVICE)
@@ -370,13 +356,10 @@ def testSpecificFold(thisfold, device: torch.device):
                   f"train={len(indices['train'])}  val={len(indices['val'])}  "
                   f"test={len(indices['test'])}")
         print("#" * 72)
-        set_seed(cfg.SEED + fold_i)   # reproducible but distinct init per fold
-        train_seq = Oasis2Dataset(split='train', fold_indices=indices,
-                                      all_sequences=all_sequences)
-        val_seq   = Oasis2Dataset(split='val',   fold_indices=indices,
-                                      all_sequences=all_sequences)
-        test_seq  = Oasis2Dataset(split='test',  fold_indices=indices,
-                                      all_sequences=all_sequences)
+        set_seed(cfg.SEED + fold_i)
+        train_seq = Oasis2Dataset(split='train', fold_indices=indices, all_sequences=all_sequences)
+        val_seq   = Oasis2Dataset(split='val',   fold_indices=indices, all_sequences=all_sequences)
+        test_seq  = Oasis2Dataset(split='test',  fold_indices=indices, all_sequences=all_sequences)
     
         save_path = str(out_dir / f"fold{fold_i + 1}_best.pt")
         result = _run_one_split(train_seq, val_seq, test_seq, device, save_path)
@@ -393,8 +376,6 @@ def testSpecificFold(thisfold, device: torch.device):
         json.dump({'folds': fold_results, 'summary': summary}, f, indent=2)
     print(f"\nWrote per-fold checkpoints + metrics to {out_dir}/")
     return summary
-
-
 
 if __name__ == "__main__":
     try:

@@ -24,15 +24,12 @@ class Config:
     OASIS2_CSV = OASIS2_DIR / "oasis_longitudinal_demographics.xlsx"
     MRI_SHAPE  = (96, 96, 96)
     MAX_VISITS = 5
-
-    # CDR/MMSE excluded (label leakage). M/F is a legitimate demographic.
-    # nWBV/eTIV/ASF are imaging-derived biomarkers, not the diagnosis.
+    # CDR/MMSE excluded (label leakage). M/F is a legitimate demographic. nWBV/eTIV/ASF are imaging-derived biomarkers, not the diagnosis.
     CLINICAL_COLS = ['Age', 'EDUC', 'SES', 'eTIV', 'nWBV', 'ASF', 'MF']
 
     TRAIN_FRAC = 0.70
     VAL_FRAC   = 0.15
     SPLIT_SEED = 42
-
     USE_CV      = True
     N_FOLDS     = 5
     CV_VAL_FRAC = 0.15
@@ -42,10 +39,9 @@ class Config:
     # 'clinical' — tabular only (fast RF-comparison diagnostic; minutes)
     # 'mri'      — MRI views only
     ABLATION = 'full'
+    ABLATION_PURE_DECISION = True  # ablations: pred = BetP only; DECISION_BLEND unused
 
     # ── Spiking neural network ────────────────────────────────────────────
-    # Capacity cut hard: two independent 4-stage SNNs were too big for OASIS-2.
-    # Shared encoder + 3 stages + smaller feat dim ≈ 4× fewer MRI params.
     T_STEPS          = 8
     LIF_TAU          = 2.0
     LIF_THRESHOLD    = 1.0
@@ -63,20 +59,18 @@ class Config:
         #'whole': (0.00, 1.00, 0.00, 1.00, 0.00, 1.00),
         #'hippocampus': (0.28, 0.58, 0.32, 0.68, 0.22, 0.78),
         #'ventricles':  (0.38, 0.72, 0.38, 0.68, 0.38, 0.62),
-        #'mtl':      (0.22, 0.56, 0.28, 0.74, 0.18, 0.82),  
-        #
-        'amygdala': (0.30, 0.55, 0.45, 0.70, 0.25, 0.75),  
+        'mtl':      (0.22, 0.56, 0.28, 0.74, 0.18, 0.82),  
+        #'amygdala': (0.30, 0.55, 0.45, 0.70, 0.25, 0.75),
+        #'amygdala_tight': (0.33, 0.52, 0.48, 0.66, 0.32, 0.68),
+        #'amygdala_entorhinal': (0.27, 0.54, 0.42, 0.66, 0.22, 0.70)   
     }
     MRI_CENTER_CROP_FRAC = 0.08
     MRI_PERCENTILE_CLIP  = (1.0, 98.0)
-
-    # Offline registered pipeline
     MRI_USE_PROCESSED = True
     MRI_REQUIRE_PROCESSED = True
     MRI_PROCESSED_DIR = OASIS2_DIR / 'processed_v5'
     MRI_USE_GM_CHANNEL = False
     MRI_USE_ROI_PRIOR_CHANNELS = False
-
     MRI_CACHE_DIR = 'data/oasis2/cache_v5'  
     MRI_ZERO_BACKGROUND = True             
 
@@ -98,23 +92,27 @@ class Config:
 
     # ── Dempster-Shafer ───────────────────────────────────────────────────
     EVIDENCE_CAP   = 18.0
-    # Unaligned RAW MRI is weak: keep BBAs near-vacuous so full ≈ clinical until registered multi-view preprocess is available.
-    MRI_EVIDENCE_CAP   = 8.5 # from 2.5
-    MRI_EVIDENCE_SCALE = 0.4 # from 0.12
+    MRI_EVIDENCE_CAP   = 8.0   # used to be 2.5
+    MRI_EVIDENCE_CAP_STANDALONE = 18.0  # MRI-only ablation: same strength as clinical
+    MRI_EVIDENCE_SCALE = 0.4   # 1.0 for MRI-only
 
+    # Soft gate uses this rule when K > kappa. One of:
+    #   'yager'   — all conflict mass K redirected onto Θ
+    #   'ordinal' — adjacent-class conflict → {CN,MCI}/{MCI,AD}; CN↔AD and compound → Θ
+    #   'pcr5'    — proportional conflict redistribution onto the conflicting pair
+    CONFLICT_RULE = 'pcr5'
     CONFLICT_KAPPA = 0.12
     CONFLICT_REPORT_KAPPA = 0.20
-
-    AUX_CLINICAL_ONLY = True
-
-    DECISION_BLEND = 0.60 # from 0.75
+    CONFLICT_GAMMA = 20.0
+    AUX_CLINICAL_ONLY = True  # full model only; ignored when ABLATION='mri'
+    DECISION_BLEND = 0.0  # unused when ABLATION_PURE_DECISION=True
+    BRANCH_RELIABILITY = {'mtl': 0.6, 'clinical': 1.0}
 
     # ── Loss weights ──────────────────────────────────────────────────────
-    # Sampler already balances class exposure ≈ 1/3. Do NOT also put full inv-freq weights in the loss — that double-counts and collapses to MCI.
-    LAMBDA_AUX      = 1.5
+    LAMBDA_AUX      = 0.0
     LAMBDA_DS       = 0.15
-    LAMBDA_K        = 0.02
-    LAMBDA_IGN      = 0.10
+    LAMBDA_K        = 0.08
+    LAMBDA_IGN      = 0.05
     LABEL_SMOOTHING = 0.02
     FOCAL_GAMMA     = 1.0
     MCI_LOSS_BOOST  = 1.0

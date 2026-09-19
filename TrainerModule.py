@@ -19,15 +19,14 @@ from DSModule import (
 logging.basicConfig(level=logging.INFO, format='%(levelname)s | %(message)s')
 log = logging.getLogger("DS-SNN")
 cfg = Config()
-
 CLASS_NAMES = cfg.CLASSES
 
+# ──────────────────────────────────────────────────────────────
+# Trainer Class
+# ──────────────────────────────────────────────────────────────
 
 class Trainer:
-    def __init__(self, model: DSSNMMF, device: torch.device = cfg.DEVICE,
-                 class_weights: Optional[Tensor] = None,
-                 lr: Optional[float] = None,
-                 param_groups: Optional[List[dict]] = None):
+    def __init__(self, model: DSSNMMF, device: torch.device = cfg.DEVICE, class_weights: Optional[Tensor] = None, lr: Optional[float] = None, param_groups: Optional[List[dict]] = None):
         self.model  = model.to(device)
         self.device = device
         self.loss_fn = DSSNNLoss(
@@ -38,10 +37,8 @@ class Trainer:
             log.info(f"  AdamW param groups LRs: {[round(x, 6) for x in lrs]}")
         else:
             lr = cfg.LEARNING_RATE if lr is None else lr
-            self.optimizer = AdamW(model.parameters(), lr=lr,
-                                   weight_decay=cfg.WEIGHT_DECAY)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.NUM_EPOCHS,
-                                           eta_min=cfg.MIN_LR)
+            self.optimizer = AdamW(model.parameters(), lr=lr, weight_decay=cfg.WEIGHT_DECAY)
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.NUM_EPOCHS, eta_min=cfg.MIN_LR)
         self.best_val_f1  = 0.0
         self.best_val_acc = 0.0
         self.best_score   = -1.0
@@ -158,9 +155,6 @@ class Trainer:
         log.info(f"  Checkpoint rules: require_all_classes={require_all}  "
                  f"max_val−train_F1_gap={max_gap}  train_F1_weight={train_w}")
         epochs_since_improve = 0
-
-        # Selection score mixes val macro-F1 / bal-acc with train F1 so a lucky
-        # tiny-val spike cannot beat a weaker-but-consistent train state.
         best_score = -1.0
 
         for epoch in range(1, cfg.NUM_EPOCHS + 1):
@@ -180,17 +174,12 @@ class Trainer:
             val_part = 0.5 * val_f1 + 0.5 * bal_acc
             score = (1.0 - train_w) * val_part + train_w * train_f1
 
-            # Soft penalty if a class is never predicted (kept for MRI-only /
-            # tiny-val edge cases when hard reject is off).
             if pred_cols < cfg.NUM_CLASSES:
                 score -= 0.10 * (cfg.NUM_CLASSES - pred_cols)
 
-            # Ignore lucky ep-1 spikes on ~18-subject val until warmup ends.
             eligible = epoch >= warmup
             reject_reason = None
             if eligible:
-                # Val must contain every class in its labels for the hard gate
-                # to be meaningful (otherwise AD may be absent from val).
                 val_label_cols = int((val_metrics['confusion'].sum(axis=1) > 0).sum())
                 if require_all and val_label_cols >= cfg.NUM_CLASSES and pred_cols < cfg.NUM_CLASSES:
                     reject_reason = (f"missing class on val "
