@@ -197,6 +197,7 @@ def _run_one_split(train_seq, val_seq, test_seq, device, save_path: str) -> dict
         'test_mean_K':  test_metrics['mean_K'],
         'test_conflict_rate': test_metrics['conflict_rate'],
         'test_mean_gate': test_metrics['mean_gate'],
+        'test_mean_decision_blend': test_metrics.get('mean_decision_blend', 0.0),
         'longitudinal_acc': long_metrics['longitudinal_acc'],
         'longitudinal_acc_dempster': long_metrics.get('longitudinal_acc_dempster',
                                                      long_metrics['longitudinal_acc']),
@@ -206,14 +207,15 @@ def _run_one_split(train_seq, val_seq, test_seq, device, save_path: str) -> dict
           f"macro_f1={result['test_macro_f1']:.4f} bal_acc={result['test_bal_acc']:.4f} "
           f"per_class_f1={[f'{f:.2f}' for f in result['test_per_class_f1']]} "
           f"meanK={result['test_mean_K']:.3f} hi-rate={result['test_conflict_rate']:.2f} "
-          f"gate={result['test_mean_gate']:.2f}")
+          f"gate={result['test_mean_gate']:.2f} blend={result['test_mean_decision_blend']:.2f}")
     print(f"  Longitudinal TEST (last-visit): {result['longitudinal_acc']:.4f}  |  "
           f"equal-Dempster accum: {result['longitudinal_acc_dempster']:.4f}")
     return result
 
 def _summarise(fold_results: list) -> dict:
     keys = ['test_acc', 'test_macro_f1', 'test_bal_acc', 'test_mean_K',
-            'test_conflict_rate', 'test_mean_gate', 'longitudinal_acc',
+            'test_conflict_rate', 'test_mean_gate', 'test_mean_decision_blend',
+            'longitudinal_acc',
             'longitudinal_acc_dempster', 'val_acc', 'val_macro_f1']
     summary = {}
     for k in keys:
@@ -246,6 +248,7 @@ def _print_summary(summary: dict, n_folds: int):
     line("Test meanK",               'test_mean_K')
     line("Test high-conflict rate",  'test_conflict_rate')
     line("Test mean soft-gate",      'test_mean_gate')
+    line("Test mean decision blend", 'test_mean_decision_blend')
     line("Longitudinal (last-visit)", 'longitudinal_acc')
     line("Longitudinal (Dempster)",   'longitudinal_acc_dempster')
     line("Val accuracy (selected)",  'val_acc')

@@ -19,3 +19,29 @@ SUBJECT-LEVEL 5-FOLD CV SUMMARY  (mean ± std)
 ------------------------------------------------------------------------
   Folds with macro-F1 ≥ RF baseline (0.519): 5/5
 ========================================================================
+
+Device: cuda | ablation=full | protocol=last-visit-only | kappa=0.25 | clin_lr=0.0007 | mri_lr=0.0007 | blend=0.0 | aux_clin_only=True | mri_scale=0.7 | channels=(16, 32, 64) | share_enc=True | focalγ=1.0 | mri_in_ch=1 | views=['mtl'] | processed=True | clinical=['Age', 'EDUC', 'SES', 'eTIV', 'nWBV', 'ASF', 'MF']
+Loading OASIS-2 sequences for 5-fold subject-level CV...
+  Subjects: 150 | final-label counts CN/MCI/AD = [73, 53, 24]
+
+========================================================================
+SUBJECT-LEVEL 5-FOLD CV SUMMARY  (mean ± std)
+========================================================================
+  Test accuracy                0.6667 ± 0.0527   folds=['0.733', '0.633', '0.667', '0.700', '0.600']
+  Test macro-F1                0.6257 ± 0.0420   folds=['0.646', '0.611', '0.609', '0.686', '0.576']
+  Test balanced accuracy       0.6384 ± 0.0461   folds=['0.652', '0.611', '0.656', '0.697', '0.577']
+  Test meanK                   0.2100 ± 0.0500   folds=['0.163', '0.291', '0.220', '0.196', '0.180']
+  Test high-conflict rate      0.4600 ± 0.4065   folds=['0.033', '1.000', '0.767', '0.300', '0.200']
+  Test mean soft-gate          0.3238 ± 0.1659   folds=['0.159', '0.587', '0.371', '0.276', '0.228']
+  Test mean decision blend     0.2543 ± 0.0859   folds=['0.165', '0.380', '0.298', '0.233', '0.196']
+  Longitudinal (last-visit)    0.6667 ± 0.0527   folds=['0.733', '0.633', '0.667', '0.700', '0.600']
+  Longitudinal (Dempster)      0.6400 ± 0.0641   folds=['0.633', '0.667', '0.667', '0.700', '0.533']
+  Val accuracy (selected)      0.7111 ± 0.0465   folds=['0.722', '0.667', '0.722', '0.778', '0.667']
+  Val macro-F1 (selected)      0.6746 ± 0.0659   folds=['0.652', '0.648', '0.706', '0.770', '0.596']
+  Per-class F1 (test):
+    CN     0.7887 ± 0.0636   folds=['0.882', '0.733', '0.812', '0.788', '0.727']
+    MCI    0.4519 ± 0.0868   folds=['0.556', '0.500', '0.400', '0.471', '0.333']
+    AD     0.6364 ± 0.1096   folds=['0.500', '0.600', '0.615', '0.800', '0.667']
+------------------------------------------------------------------------
+  Folds with macro-F1 ≥ RF baseline (0.519): 5/5
+========================================================================

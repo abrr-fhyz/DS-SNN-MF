@@ -92,24 +92,27 @@ class Config:
 
     # ── Dempster-Shafer ───────────────────────────────────────────────────
     EVIDENCE_CAP   = 18.0
-    MRI_EVIDENCE_CAP   = 8.0   # used to be 2.5
+    MRI_EVIDENCE_CAP   = 9.0   # fusion-mode MRI cap (was 8.0)
     MRI_EVIDENCE_CAP_STANDALONE = 18.0  # MRI-only ablation: same strength as clinical
-    MRI_EVIDENCE_SCALE = 0.4   # 1.0 for MRI-only
+    MRI_EVIDENCE_SCALE = 0.7   # fusion-mode; 1.0 for MRI-only standalone
 
     # Soft gate uses this rule when K > kappa. One of:
     #   'yager'   — all conflict mass K redirected onto Θ
     #   'ordinal' — adjacent-class conflict → {CN,MCI}/{MCI,AD}; CN↔AD and compound → Θ
     #   'pcr5'    — proportional conflict redistribution onto the conflicting pair
     CONFLICT_RULE = 'pcr5'
-    CONFLICT_KAPPA = 0.12
+    CONFLICT_KAPPA = 0.25
     CONFLICT_REPORT_KAPPA = 0.20
     CONFLICT_GAMMA = 20.0
     AUX_CLINICAL_ONLY = True  # full model only; ignored when ABLATION='mri'
-    DECISION_BLEND = 0.0  # unused when ABLATION_PURE_DECISION=True
-    BRANCH_RELIABILITY = {'mtl': 0.6, 'clinical': 1.0}
+    # K-aware decision (MD §C): low K → fused BetP; high K → up to DECISION_BLEND_MAX clinical aux.
+    DECISION_BLEND = 0.0
+    DECISION_BLEND_MAX = 0.50
+    DECISION_BLEND_KAPPA = 0.20
+    BRANCH_RELIABILITY = {'mtl': 0.90, 'clinical': 1.0}
 
     # ── Loss weights ──────────────────────────────────────────────────────
-    LAMBDA_AUX      = 0.0
+    LAMBDA_AUX      = 0.8
     LAMBDA_DS       = 0.15
     LAMBDA_K        = 0.08
     LAMBDA_IGN      = 0.05
@@ -134,7 +137,7 @@ class Config:
 
     CKPT_REQUIRE_ALL_CLASSES = True
     CKPT_MAX_VAL_TRAIN_GAP   = 0.15   # reject if val_f1 - train_f1 > this
-    CKPT_TRAIN_F1_WEIGHT     = 0.25   # score mixes in train macro-F1
+    CKPT_TRAIN_F1_WEIGHT     = 0.10   # score mixes in train macro-F1
 
     USE_LOSS_CLASS_WEIGHTS = False
 

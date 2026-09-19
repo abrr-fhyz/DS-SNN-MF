@@ -93,7 +93,7 @@ class Trainer:
     @torch.no_grad()
     def evaluate(self, loader: DataLoader, verbose: bool = False) -> Dict:
         self.model.eval()
-        correct, n, conflict_count, k_sum, gate_sum = 0, 0, 0, 0.0, 0.0
+        correct, n, conflict_count, k_sum, gate_sum, blend_sum = 0, 0, 0, 0.0, 0.0, 0.0
         all_preds, all_labels = [], []
         all_bel, all_pl = [], []
 
@@ -108,6 +108,7 @@ class Trainer:
             conflict_count += out['conflict_flag'].sum().item()
             k_sum          += out['K'].sum().item()
             gate_sum       += out['conflict_gate'].sum().item()
+            blend_sum      += out['decision_blend'].sum().item()
             all_bel.append(out['bel'].cpu())
             all_pl.append(out['pl'].cpu())
             all_preds.extend(out['pred'].cpu().tolist())
@@ -124,6 +125,7 @@ class Trainer:
             'conflict_rate': conflict_count / n,
             'mean_K':        k_sum / n,
             'mean_gate':     gate_sum / n,   # avg soft Yager weight ∈ (0,1)
+            'mean_decision_blend': blend_sum / n,  # avg BetP↔aux mix; ~0 ⇒ fallback not firing
             'avg_uncertainty': (pl - bel).mean().item(),
             'confusion': cm,
         }
@@ -216,7 +218,7 @@ class Trainer:
                 f"Val Acc {val_metrics['acc']:.4f} F1 {val_metrics['macro_f1']:.4f} | "
                 f"Per-class F1 {[f'{f:.2f}' for f in val_metrics['per_class_f1']]} | "
                 f"meanK {val_metrics['mean_K']:.3f} (hi-rate {val_metrics['conflict_rate']:.2f}, "
-                f"gate {val_metrics['mean_gate']:.2f}) | "
+                f"gate {val_metrics['mean_gate']:.2f}, blend {val_metrics['mean_decision_blend']:.2f}) | "
                 f"t={time.time()-t0:.1f}s")
 
             if epoch >= cfg.MIN_EPOCHS and epochs_since_improve >= cfg.PATIENCE:

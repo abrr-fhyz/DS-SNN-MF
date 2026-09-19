@@ -21,8 +21,6 @@ SUBJECT-LEVEL 5-FOLD CV SUMMARY  (mean ± std)
 ------------------------------------------------------------------------
   Folds with macro-F1 ≥ RF baseline (0.519): 1/5
 ========================================================================
-Primary paper metric: Test macro-F1 and Test accuracy (mean ± std).
-Val numbers are for early-stopping only — do not report them as results.
 
 ##### NO CLINICAL AUX
 Device: cuda | ablation=mri | protocol=last-visit-only | kappa=0.12 | clin_lr=0.0007 | mri_lr=0.0007 | blend=0.0 | aux_clin_only=True | mri_scale=1.0 | channels=(16, 32, 64) | share_enc=True | focalγ=1.0 | mri_in_ch=1 | views=['amygdala'] | processed=True | clinical=['Age', 'EDUC', 'SES', 'eTIV', 'nWBV', 'ASF', 'MF']

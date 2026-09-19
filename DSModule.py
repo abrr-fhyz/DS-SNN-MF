@@ -314,10 +314,11 @@ class TemporalAccumulator:
         return self.m_acc
 
 class DSSNNLoss(nn.Module):
-    """L = L_CE(betp) + λ_aux·L_aux + λ_ds·L_DS + λ_k·L_K + λ_ign·L_ign.
+    """L = L_CE(decision) + λ_aux·L_aux + λ_ds·L_DS + λ_k·L_K + λ_ign·L_ign.
 
-    CE terms are class-weighted focal losses (γ from cfg.FOCAL_GAMMA). DS and
-    ignorance terms warm up so early noisy BBAs don't dominate.
+    CE is class-weighted focal loss (γ from cfg.FOCAL_GAMMA) on the reported
+    decision mix, not raw BetP. DS and ignorance terms warm up so early noisy
+    BBAs don't dominate.
     """
     def __init__(self, class_weights: Optional[Tensor] = None):
         super().__init__()
@@ -353,7 +354,7 @@ class DSSNNLoss(nn.Module):
         bba_singletons = m_fused[:, SINGLETONS]
         bba_ignorance  = m_fused[:, FULL_FRAME]
 
-        L_ce  = focal_ce_from_probs(out['betp'], labels, self.class_weights,
+        L_ce  = focal_ce_from_probs(out['decision'], labels, self.class_weights,
                                     self.focal_gamma, self.label_smoothing)
         L_aux = focal_ce_from_logits(out['aux_logits'], labels, self.class_weights,
                                      self.focal_gamma, self.label_smoothing)

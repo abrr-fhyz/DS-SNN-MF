@@ -47,5 +47,3 @@ SUBJECT-LEVEL 5-FOLD CV SUMMARY  (mean ± std)
 ------------------------------------------------------------------------
   Folds with macro-F1 ≥ RF baseline (0.519): 0/5
 ========================================================================
-Primary paper metric: Test macro-F1 and Test accuracy (mean ± std).
-Val numbers are for early-stopping only — do not report them as results
