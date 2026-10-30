@@ -41,9 +41,7 @@ import torch.nn as nn
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 from torch.utils.data import DataLoader, Dataset
 
-from config import Config
-
-cfg = Config()
+from config import cfg
 
 
 # ── Leaky feature set ─────────────────────

@@ -31,13 +31,13 @@ Ablations: `full` | `clinical` | `mri` (`config.ABLATION`).
 
 | Risk | Prevention | Code |
 |------|------------|------|
-| **Subject leakage** | Split on subject indices; all visits of a subject stay in one of train/val/test | `make_stratified_folds()` in `OasisModule.py`; CV loop in `main.py` |
-| **Visit / slice leakage** | No visit-level or 2D-slice splits; one 3D volume per session; train sample = last visit only | `CrossSectionalWrapper`; MRI loaders |
-| **Label leakage** | **CDR / MMSE never used as inputs**; labels only | `CLINICAL_COLS` in `config.py`; `_clinical_value` only reads those cols |
-| **Norm leakage** | Clinical mean/std (+ NaN impute) fit on **train subjects only**, then applied to val/test | `_fit_clinical_stats` / `_apply_clinical_norm`; per-fold deep-copy of sequences |
-| **MRI cache collapse** | Cache keys include session id (`OAS2_*_MR*`), not stem alone | `_cache_path_for` → `cache_v5` |
-| **Cross-subject intensity leak** | Percentile clip / [0,1] map is **per-volume** (brain mask of that scan) | `_load_nifti` |
-| **Optimistic protocol** | Contrast only: `leaky_demo.py` deliberately adds CDR/MMSE to show >90% is trivial under label leak | Not used for primary metrics |
+| **Subject leakage** | Split on subject indices; all visits of a subject stay in one of train/val/test | `make_stratified_folds()` in `DataModule.py`; CV loop in `ExperimentModule.py` |
+| **Visit / slice leakage** | No visit-level or 2D-slice splits; one 3D volume per session; evaluation on the last visit (training on the last or all visits, per `TRAIN_VISITS`) | `CrossSectionalWrapper` in `DataModule.py`; MRI loaders |
+| **Label leakage** | **CDR / MMSE never used as inputs**; labels only | `clinical_cols` in `config.py`; loaders only read those cols |
+| **Norm leakage** | Clinical mean/std (+ NaN impute) fit on **train subjects only**, then applied to val/test | `ClinicalScaler`, `split_sequences` in `DataModule.py` |
+| **MRI cache collapse** | Processed tensors are keyed by session id, not file stem | `processed_tensor_path` in `DataModule.py` |
+| **Cross-subject intensity leak** | Percentile clip / [0,1] map is **per-volume** (brain mask of that scan) | `intensity_normalise` in `OtherModules/mri_preprocess.py` |
+| **Optimistic protocol** | Contrast only: `OtherModules/leaky_demo.py` deliberately adds CDR/MMSE to show >90% is trivial under label leak | Not used for primary metrics |
 
 **Features used:** `Age, EDUC, SES, eTIV, nWBV, ASF, MF`.  
 `eTIV` / `nWBV` / `ASF` are imaging-derived biomarkers (not CDR). They can overlap information with the MRI branch; that is modality redundancy, not label leakage.
@@ -100,9 +100,12 @@ with aux = clinical features only when `AUX_CLINICAL_ONLY=True`.
 | File | Role |
 |------|------|
 | `config.py` | Protocol, features, SNN/DS hyperparameters |
-| `OasisModule.py` | Load, subject folds, train-only clinical norm, MRI I/O |
+| `DataModule.py` | Subject folds, train-only clinical norm, MRI I/O, datasets |
+| `OasisModule.py` / `Oasis3Module.py` | Dataset loaders |
 | `SNNModule.py` | PLIF / 3D SNN encoder, clinical MLP |
-| `DSModule.py` | Evidential BBAs, conflict gate, `DSSNMMF`, losses |
-| `main.py` / `TrainerModule.py` | CV, last-visit training, longitudinal eval |
-| `leaky_demo.py` | Intentional CDR/MMSE leak contrast (not primary) |
-| `baselines.py` | RF / LogReg on the same subject folds |
+| `DSModule.py` | BBA algebra, evidential layer, conflict gate |
+| `FusionModule.py` / `LossModule.py` | `DSSNMMF` model and losses |
+| `main.py` / `ExperimentModule.py` / `TrainerModule.py` | CV, training, evaluation |
+| `MetricsModule.py` | Metrics and calibration |
+| `OtherModules/leaky_demo.py` | Intentional CDR/MMSE leak contrast (not primary) |
+| `OtherModules/baselines.py` | RF / LogReg on the same subject folds |

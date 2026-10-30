@@ -5,9 +5,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple, List
 from torch import Tensor
 
-from config import Config
-
-cfg = Config()
+from config import cfg
 
 # ──────────────────────────────────────────────────────────────
 # 3-D spiking building blocks
@@ -125,7 +123,7 @@ class SNN3DEncoder(nn.Module):
     Input:   (B, in_ch, D, H, W)
     Output:  (B, out_dim)  — non-negative rate-coded feature vector.
     """
-    def __init__(self, in_ch: int = 1, channels: Tuple[int, ...] = cfg.ENCODER_CHANNELS, T: int = cfg.T_STEPS, out_dim: int = cfg.VIEW_FEAT_DIM, dropout: float = cfg.ENCODER_DROPOUT, input_coding: str = cfg.SNN_INPUT_CODING, blocks_per_stage: int = getattr( cfg, 'SNN_BLOCKS_PER_STAGE', 1)):
+    def __init__(self, in_ch: int = 1, channels: Tuple[int, ...] = cfg.ENCODER_CHANNELS, T: int = cfg.T_STEPS, out_dim: int = cfg.VIEW_FEAT_DIM, dropout: float = cfg.ENCODER_DROPOUT, input_coding: str = cfg.SNN_INPUT_CODING, blocks_per_stage: int = cfg.SNN_BLOCKS_PER_STAGE):
         super().__init__()
         assert len(channels) >= 1, "channels must be non-empty"
         self.T = T
@@ -164,8 +162,6 @@ class SNN3DEncoder(nn.Module):
             if isinstance(m, nn.Conv3d):
                 nn.init.kaiming_normal_(
                     m.weight, mode='fan_out', nonlinearity='relu')
-                #with torch.no_grad():
-                #    m.weight.mul_(0.5)
 
     def _encode_step(self, mri: Tensor) -> Tensor:
         if self.input_coding == 'bernoulli':
@@ -203,7 +199,7 @@ class SNN3DEncoder(nn.Module):
         return self.proj(self.dropout(f))
 
 # ──────────────────────────────────────────────────────────────
-# Clinical tabular encoder (unchanged)
+# Clinical tabular encoder
 # ──────────────────────────────────────────────────────────────
 class ClinicalMLP(nn.Module):
     """MLP encoder for the clinical/demographic features."""

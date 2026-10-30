@@ -1,5 +1,7 @@
 __pycache__/
+.pytest_cache/
 data/
+runs/
 cv_runs/
 cv_runs_lookback/
 test_runs/
