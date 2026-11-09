@@ -1,9 +1,9 @@
-"""Dataset-agnostic data layer shared by the OASIS-2 and OASIS-3 loaders.
+"""Data layer for the OASIS-3 loader.
 
 A *sequence* is one subject's chronologically ordered list of *visits*; a visit is a dict with
-``subject_id, mri_id, visit_number, mri_path, clinical_raw, clinical, label``. Dataset modules
-(``OasisModule``, ``Oasis3Module``) only build sequences. Splitting, clinical normalisation,
-MRI tensor loading and torch datasets live here.
+``subject_id, mri_id, visit_number, mri_path, clinical_raw, clinical, label`` and optional
+``pet_id, pet_path, ct_id, ct_path``. ``Oasis3Module`` only builds sequences. Splitting,
+clinical normalisation, volume tensor loading and torch datasets live here.
 """
 import random
 import re
@@ -98,20 +98,20 @@ def pick_column(df: pd.DataFrame, aliases: List[str], what: str, required: bool 
 
 
 def make_visit(subject_id, mri_id: str, visit_number: int, mri_path: str,
-               clinical_raw, label: int) -> Visit:
+               clinical_raw, label: int, pet_id=None, pet_path=None,
+               ct_id=None, ct_path=None) -> Visit:
     raw = np.asarray(clinical_raw, dtype=np.float32)
     return {'subject_id': subject_id, 'mri_id': mri_id, 'visit_number': int(visit_number),
-            'mri_path': str(mri_path), 'clinical_raw': raw, 'clinical': raw, 'label': int(label)}
+            'mri_path': str(mri_path), 'clinical_raw': raw, 'clinical': raw, 'label': int(label),
+            'pet_id': pet_id, 'pet_path': str(pet_path) if pet_path else None,
+            'ct_id': ct_id, 'ct_path': str(ct_path) if ct_path else None}
 
 
 def load_dataset() -> Sequences:
     """Sequences for ``cfg.DATASET`` (visits with unresolvable MRI/labels are dropped)."""
-    if cfg.DATASET == 'oasis2':
-        from OasisModule import load_sequences
-    elif cfg.DATASET == 'oasis3':
-        from Oasis3Module import load_sequences
-    else:
+    if cfg.DATASET != 'oasis3':
         raise KeyError(f"No loader registered for dataset {cfg.DATASET!r}")
+    from Oasis3Module import load_sequences
     return load_sequences(cfg.spec)
 
 
@@ -186,32 +186,60 @@ def split_sequences(sequences: Sequences, indices: Dict[str, np.ndarray]) -> Dic
 
 
 # ──────────────────────────────────────────────────────────────
-# MRI tensors
+# Imaging tensors
 # ──────────────────────────────────────────────────────────────
 
-def processed_tensor_path(mri_id: str) -> Path:
+def processed_tensor_path(session_id: str) -> Path:
     d, h, w = cfg.MRI_SHAPE
-    return cfg.MRI_PROCESSED_DIR / mri_id / f"tensor_{d}x{h}x{w}.pt"
+    return cfg.MRI_PROCESSED_DIR / session_id / f"tensor_{d}x{h}x{w}.pt"
 
 
-def load_mri_tensor(visit: Visit) -> Tensor:
+def load_volume_tensor(session_id: str, channels: int) -> Tensor:
     """(C, D, H, W) tensor written by ``OtherModules.mri_preprocess``."""
-    path = processed_tensor_path(str(visit['mri_id']))
+    path = processed_tensor_path(str(session_id))
     if not path.exists():
         raise FileNotFoundError(
-            f"Processed MRI missing for '{visit['mri_id']}' ({path}). "
-            f"Run: python -m OtherModules.mri_preprocess --dataset {cfg.DATASET}")
+            f"Processed volume missing for '{session_id}' ({path}). "
+            f"Run: python -m OtherModules.mri_preprocess")
     tensor = torch.load(path, map_location='cpu')
-    channels = cfg.mri_in_channels()
     if tensor.ndim != 4 or tensor.shape[0] < channels:
         raise ValueError(f"{path}: expected (>= {channels}, D, H, W), got {tuple(tensor.shape)}")
     return tensor[:channels].float()
 
 
-def _visit_mri(visit: Visit) -> Tensor:
-    if cfg.ABLATION == 'clinical':  # MRI unused: skip the I/O
-        return torch.zeros((cfg.mri_in_channels(), *cfg.MRI_SHAPE))
-    return load_mri_tensor(visit)
+def load_mri_tensor(visit: Visit) -> Tensor:
+    return load_volume_tensor(str(visit['mri_id']), cfg.mri_in_channels())
+
+
+def _zero_volume(channels: int) -> Tensor:
+    return torch.zeros((channels, *cfg.MRI_SHAPE))
+
+
+def _visit_volume(visit: Visit, source: str, id_key: str, channels: int) -> Tuple[Tensor, bool]:
+    """Load a processed volume if the source is active and the visit has a session id."""
+    if not cfg.uses(source):
+        return _zero_volume(channels), False
+    session_id = visit.get(id_key)
+    if not session_id:
+        return _zero_volume(channels), False
+    return load_volume_tensor(str(session_id), channels), True
+
+
+def visit_tensors(visit: Visit, augment: bool = False) -> Dict[str, Tensor]:
+    """MRI / PET / CT volumes, presence flags, clinical vector (no label)."""
+    mri, _ = _visit_volume(visit, 'mri', 'mri_id', cfg.mri_in_channels())
+    pet, has_pet = _visit_volume(visit, 'pet', 'pet_id', 1)
+    ct, has_ct = _visit_volume(visit, 'ct', 'ct_id', 1)
+    if augment:
+        if cfg.uses('mri'):
+            mri = augment_mri(mri)
+        if has_pet:
+            pet = augment_mri(pet)
+        if has_ct:
+            ct = augment_mri(ct)
+    return {'mri': mri, 'pet': pet, 'ct': ct,
+            'has_pet': torch.tensor(has_pet), 'has_ct': torch.tensor(has_ct),
+            'clinical': torch.tensor(visit['clinical'], dtype=torch.float32)}
 
 
 def augment_mri(mri: Tensor) -> Tensor:
@@ -250,12 +278,9 @@ class CrossSectionalWrapper(Dataset):
 
     def __getitem__(self, idx: int) -> Dict[str, Tensor]:
         visit = self.samples[idx]
-        mri = _visit_mri(visit)
-        if self.augment and cfg.ABLATION != 'clinical':
-            mri = augment_mri(mri)
-        return {'mri': mri,
-                'clinical': torch.tensor(visit['clinical'], dtype=torch.float32),
-                'label': torch.tensor(int(visit['label']), dtype=torch.long)}
+        item = visit_tensors(visit, augment=self.augment)
+        item['label'] = torch.tensor(int(visit['label']), dtype=torch.long)
+        return item
 
     def labels(self) -> List[int]:
         return [int(v['label']) for v in self.samples]
@@ -277,9 +302,7 @@ class SubjectDataset(Dataset):
         return len(self.sequences)
 
     def __getitem__(self, idx: int) -> Dict[str, object]:
-        visits = [{'mri': _visit_mri(v),
-                   'clinical': torch.tensor(v['clinical'], dtype=torch.float32)}
-                  for v in self.sequences[idx]]
+        visits = [visit_tensors(v) for v in self.sequences[idx]]
         return {'visits': visits,
                 'label': torch.tensor(int(self.sequences[idx][-1]['label']), dtype=torch.long)}
 
@@ -287,14 +310,22 @@ class SubjectDataset(Dataset):
 def longitudinal_collate_fn(batch: List[dict]) -> dict:
     """Pad each subject's visit list to the batch maximum; ``has_visit`` marks real visits."""
     labels = torch.stack([item['label'] for item in batch])
+    volume_keys = ('mri', 'pet', 'ct', 'clinical')
     steps = []
     for v in range(max(len(item['visits']) for item in batch)):
-        mri, clinical, present = [], [], []
+        stacked = {k: [] for k in volume_keys}
+        present, has_pet, has_ct = [], [], []
         for item in batch:
             real = v < len(item['visits'])
             visit = item['visits'][v] if real else item['visits'][0]
-            mri.append(visit['mri'] if real else torch.zeros_like(visit['mri']))
-            clinical.append(visit['clinical'] if real else torch.zeros_like(visit['clinical']))
+            for key in volume_keys:
+                stacked[key].append(visit[key] if real else torch.zeros_like(visit[key]))
             present.append(real)
-        steps.append({'mri': torch.stack(mri), 'clinical': torch.stack(clinical), 'has_visit': present})
+            has_pet.append(bool(visit['has_pet']) if real else False)
+            has_ct.append(bool(visit['has_ct']) if real else False)
+        step = {k: torch.stack(stacked[k]) for k in volume_keys}
+        step['has_visit'] = present
+        step['has_pet'] = torch.tensor(has_pet)
+        step['has_ct'] = torch.tensor(has_ct)
+        steps.append(step)
     return {'visits': steps, 'label': labels}

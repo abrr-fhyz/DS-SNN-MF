@@ -1,6 +1,6 @@
 """Tabular baselines (logistic regression, random forest) on the same subject-level folds.
 
-CLI:   python -m OtherModules.baselines [--dataset oasis2|oasis3]
+CLI:   python -m OtherModules.baselines
 Import: ``run_baselines(sequences, folds)`` is also used by ``ExperimentModule`` so the neural
 model and the baselines are always compared on identical splits.
 """
@@ -14,8 +14,8 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from config import cfg
-from DataModule import Sequences, load_dataset, make_stratified_folds, subject_labels
-from MetricsModule import balanced_accuracy, confusion_matrix, per_class_f1
+from MODULE.DataModule import Sequences, load_dataset, make_stratified_folds, subject_labels
+from MODULE.MetricsModule import balanced_accuracy, confusion_matrix, per_class_f1
 
 
 def _matrix(sequences: Sequences, indices: np.ndarray, last_only: bool):

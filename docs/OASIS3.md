@@ -10,10 +10,12 @@ Under `data/oasis3/`:
 OASIS3_UDSb4_cdr.csv            CDR per clinical visit            (required: labels)
 OASIS3_demographics.csv         sex, education, APOE, age at entry (needed for MF, EDUC, APOE4, Age)
 OASIS3_Freesurfer_output.csv    ICV, brain volume per MR session   (needed for eTIV, nWBV)
-OAS30001_MR_d0129/.../*T1w.nii.gz     one folder per MR session
+OAS30001_MR_d0129/.../*T1w.nii.gz          one folder per MR session
+OAS30001_AV45_d0129/.../*_pet.nii.gz       PET (AV45 / PIB / FDG); optional
+OAS30001_CT_d0129/.../*_CT.nii.gz          CT; optional
 ```
 
-A BIDS layout is also recognised: `sub-OAS30001/ses-d0129/anat/*T1w.nii.gz`. Where a session has several T1w runs, the first in sorted order is used. File names and the T1 glob are in `config.py` (`OASIS3_*_FILE`, `OASIS3_T1_GLOB`).
+A BIDS layout is also recognised for T1: `sub-OAS30001/ses-d0129/anat/*T1w.nii.gz`. Where a session has several runs, the first in sorted order is used. File names and globs are in `config.py` (`OASIS3_*_FILE`, `OASIS3_T1_GLOB`, `OASIS3_PET_GLOB`, `OASIS3_CT_GLOB`).
 
 ## Column aliases
 
@@ -25,20 +27,21 @@ Matching is case-insensitive and ignores spaces and punctuation.
 | Total CDR | `CDRTOT`, `cdr`, `CDR` |
 | Days since entry (CDR sheet) | `days_to_visit`; otherwise parsed from `OASIS_session_label` / `session_label` / `Session` |
 | Age at visit (CDR sheet) | `age at visit`, `age_at_visit`, `AgeAtVisit` |
-| Sex | `M/F`, `Sex`, `Gender`, `MF` |
+| Sex | `M/F`, `Sex`, `Gender`, `MF` (numeric `GENDER`: 1 = male, 2 = female) |
 | Education | `Education`, `EDUC`, `YearsEducation` |
 | APOE genotype | `APOE`, `APOE_genotype`, `apoe` |
 | Age at entry | `AgeatEntry`, `age_at_entry`, `AgeEntry` |
 | MR session (FreeSurfer) | `MR ID`, `MR_session`, `MR_ID`, `Session`, `session_label`, `FS_FSDATA_ID` |
 | Intracranial volume | `IntraCranialVol`, `ICV`, `eTIV` |
-| Brain volume | `BrainSegVol`, `BrainSegVolume` |
+| Brain volume | `BrainSegVol`, `BrainSegVolume`; otherwise `TotalGrayVol + CorticalWhiteMatterVol` (the released table has no `BrainSegVol`) |
 
 ## How scans become labelled visits
 
 - Session ids look like `OAS30001_MR_d0129`; the number is days since study entry.
 - Each MR session is paired with the CDR visit nearest in days. Pairs further apart than `cfg.MAX_CDR_GAP_DAYS` (default 365, a chosen assumption, not from OASIS documentation) are dropped. Tighten it for cleaner labels at the cost of fewer visits.
+- The nearest PET and nearest CT within the same 365-day window of the MR day are attached to that visit. Mixed tracers share one PET encoder. A visit with no PET or CT still enters the dataset; fusion uses a vacuous mass for the missing source.
 - Age at scan is `AgeatEntry + day/365.25` when demographics are present, otherwise it is taken from the CDR sheet and shifted by the day offset.
-- `eTIV` is the FreeSurfer intracranial volume and `nWBV` is `BrainSegVol / ICV`. These are not identical to the OASIS-2 definitions, so models do not transfer between datasets.
+- `eTIV` is the FreeSurfer intracranial volume and `nWBV` is brain volume / ICV, where brain volume is `BrainSegVol` or, in the released table, `TotalGrayVol + CorticalWhiteMatterVol`.
 - Subjects keep their last `max_visits` (8) paired visits.
 
 ## Features
@@ -48,16 +51,16 @@ Matching is case-insensitive and ignores spaces and punctuation.
 ## Steps
 
 ```bash
-python -m OtherModules.mri_preprocess --dataset oasis3 --limit 5 --force   # smoke test
-python -m OtherModules.mri_preprocess --dataset oasis3 --chunk 32 --workers 4
-python main.py --dataset oasis3 --repeats 3
+python -m OtherModules.mri_preprocess --limit 5 --force   # smoke test (MRI then PET then CT)
+python -m OtherModules.mri_preprocess --chunk 16 --workers 4
+python main.py --ablation full
 ```
 
 Check the smoke test outputs (`data/oasis3/processed_v5/<session>/t1.nii.gz`) visually before processing everything. HD-BET is invoked on whole chunks and expects output files named after the inputs; if your HD-BET version names them differently, `_locate` in `mri_preprocess.py` is the place to adjust.
 
 ## Training choices
 
-OASIS-3 defaults to `TRAIN_VISITS='all'`: every paired visit is a sample, evaluation stays on each subject's last visit, and splits stay subject-level. Compare against `--train-visits last` before relying on it.
+OASIS-3 defaults to `TRAIN_VISITS='all'`: every paired visit is a sample, evaluation stays on each subject's last visit, and splits stay subject-level. Compare against `--train-visits last` before relying on it. `--ablation` is `full` or a plus-separated subset of `mri`, `pet`, `ct`, `clinical`.
 
 ## Tuning discipline
 

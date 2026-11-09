@@ -2,10 +2,10 @@
 import pytest
 import torch
 
-from DSModule import (DSEvidenceLayer, TemporalAccumulator, compute_belief_plausibility, conflict_breakdown,
+from MODULE.DSModule import (DSEvidenceLayer, TemporalAccumulator, compute_belief_plausibility, conflict_breakdown,
                       dempster_combine, discount_bba, ordinal_yager_combine, pcr5_combine,
                       pignistic_probability, vacuous_bba)
-from LossModule import evidential_utility_loss, ignorance_anchoring_loss
+from MODULE.LossModule import evidential_utility_loss, ignorance_anchoring_loss
 
 FULL = 7
 

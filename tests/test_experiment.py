@@ -1,4 +1,4 @@
-"""End-to-end smoke tests on a synthetic OASIS-2-style dataset with tiny volumes."""
+"""End-to-end smoke tests on a synthetic OASIS-3-style dataset with tiny volumes."""
 import json
 
 import numpy as np
@@ -7,8 +7,9 @@ import pytest
 import torch
 
 import ExperimentModule as exp
-from config import cfg
-from DataModule import load_dataset, make_stratified_folds, set_seed, split_sequences
+from config import cfg, parse_ablation
+from MODULE.DataModule import load_dataset, make_stratified_folds, set_seed, split_sequences
+from MODULE.FusionModule import DSSNMMF
 from OtherModules.baselines import run_baselines
 
 SHAPE = (16, 16, 16)
@@ -18,25 +19,41 @@ SHAPE = (16, 16, 16)
 def synthetic(tmp_path, monkeypatch):
     """24 subjects (8 per class) × 2 visits with informative clinical features and random MRI."""
     rng = np.random.default_rng(0)
-    rows = []
+    cdr_rows, demo_rows, fs_rows = [], [], []
     for i in range(24):
         label = i % 3
-        for visit in (1, 2):
-            mri_id = f"OAS2_{i:04d}_MR{visit}"
-            raw = tmp_path / 'OAS2_RAW_PART1' / mri_id / 'RAW' / 'mpr-1.nii.gz'
+        subject = f"OAS3{i:04d}"
+        demo_rows.append({'OASISID': subject, 'GENDER': 1 + i % 2, 'EDUC': 12 + i % 5,
+                          'AgeatEntry': 70 + 3 * label + rng.normal()})
+        pet_id, ct_id = f"{subject}_AV45_d0300", f"{subject}_CT_d0300"
+        pet_raw = tmp_path / pet_id / 'pet1' / f"sub-{subject}_ses-d0300_acq-AV45_pet.nii.gz"
+        ct_raw = tmp_path / ct_id / 'CT1' / f"sub-{subject}_sess-d0300_CT.nii.gz"
+        pet_raw.parent.mkdir(parents=True)
+        ct_raw.parent.mkdir(parents=True)
+        pet_raw.write_bytes(b'')
+        ct_raw.write_bytes(b'')
+        for sid in (pet_id, ct_id):
+            tensor = tmp_path / cfg.PROCESSED_SUBDIR / sid / f"tensor_{SHAPE[0]}x{SHAPE[1]}x{SHAPE[2]}.pt"
+            tensor.parent.mkdir(parents=True)
+            torch.save(torch.rand(1, *SHAPE), tensor)
+        for day in (100, 500):
+            mri_id = f"{subject}_MR_d{day:04d}"
+            raw = tmp_path / mri_id / 'anat1' / f"sub-{subject}_ses-d{day:04d}_T1w.nii.gz"
             raw.parent.mkdir(parents=True)
             raw.write_bytes(b'')
             tensor = tmp_path / cfg.PROCESSED_SUBDIR / mri_id / f"tensor_{SHAPE[0]}x{SHAPE[1]}x{SHAPE[2]}.pt"
             tensor.parent.mkdir(parents=True)
             torch.save(torch.rand(1, *SHAPE), tensor)
-            rows.append({'Subject ID': f"OAS2_{i:04d}", 'MRI ID': mri_id, 'Visit': visit, 'CDR': [0, 0.5, 1][label],
-                         'M/F': 'MF'[i % 2], 'Age': 70 + 3 * label + rng.normal(), 'EDUC': 12 + i % 5,
-                         'SES': 1 + i % 4, 'eTIV': 1500 + rng.normal() * 50, 'nWBV': 0.78 - 0.03 * label,
-                         'ASF': 1.2 + rng.normal() * 0.05})
-    pd.DataFrame(rows).to_csv(tmp_path / 'oasis_longitudinal_demographics.csv', index=False)
+            cdr_rows.append({'OASISID': subject, 'days_to_visit': day, 'CDRTOT': [0, 0.5, 1][label]})
+            icv = 1.5e6 + rng.normal() * 5e4
+            fs_rows.append({'MR_session': mri_id, 'IntraCranialVol': icv,
+                            'TotalGrayVol': icv * (0.40 - 0.02 * label), 'CorticalWhiteMatterVol': icv * 0.30})
+    pd.DataFrame(cdr_rows).to_csv(tmp_path / cfg.OASIS3_CDR_FILE, index=False)
+    pd.DataFrame(demo_rows).to_csv(tmp_path / cfg.OASIS3_DEMOGRAPHICS_FILE, index=False)
+    pd.DataFrame(fs_rows).to_csv(tmp_path / cfg.OASIS3_FREESURFER_FILE, index=False)
 
-    monkeypatch.setitem(cfg.DATASETS['oasis2'], 'root', tmp_path)
-    for key, value in dict(DATASET='oasis2', MRI_SHAPE=SHAPE, VIEW_SHAPE=SHAPE, NUM_EPOCHS=2, MIN_EPOCHS=1,
+    monkeypatch.setitem(cfg.DATASETS['oasis3'], 'root', tmp_path)
+    for key, value in dict(DATASET='oasis3', MRI_SHAPE=SHAPE, VIEW_SHAPE=SHAPE, NUM_EPOCHS=2, MIN_EPOCHS=1,
                            CHECKPOINT_WARMUP=1, PATIENCE=1, N_FOLDS=2, REPEATS=1, USE_CV=True, BATCH_SIZE=4,
                            GRAD_ACCUM_STEPS=1, NUM_WORKERS=0, BOOTSTRAP_ROUNDS=20, CKPT_MAX_VAL_TRAIN_GAP=1.0,
                            OUT_DIR=tmp_path / 'runs', ABLATION='full').items():
@@ -44,14 +61,39 @@ def synthetic(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_oasis2_loader_on_synthetic_tree(synthetic):
+def test_oasis3_loader_on_synthetic_tree(synthetic):
     sequences = load_dataset()
     assert len(sequences) == 24 and all(len(s) == 2 for s in sequences)
-    assert sequences[0][0]['clinical_raw'].shape == (7,)
+    assert sequences[0][0]['clinical_raw'].shape == (5,)
     assert [s[-1]['label'] for s in sequences[:3]] == [0, 1, 2]
+    assert sequences[0][0]['pet_id'] == f"{sequences[0][0]['subject_id']}_AV45_d0300"
+    assert sequences[0][0]['ct_id'] == f"{sequences[0][0]['subject_id']}_CT_d0300"
 
 
-@pytest.mark.parametrize('ablation', ['full', 'clinical', 'mri'])
+def test_parse_ablation_full_and_subsets():
+    assert parse_ablation('full') == frozenset({'mri', 'pet', 'ct', 'clinical'})
+    assert parse_ablation('mri+pet') == frozenset({'mri', 'pet'})
+    assert parse_ablation('clinical') == frozenset({'clinical'})
+    with pytest.raises(ValueError, match='Unknown'):
+        parse_ablation('eeg')
+
+
+def test_missing_pet_ct_use_vacuous_mass(synthetic, monkeypatch):
+    monkeypatch.setattr(cfg, 'ABLATION', 'full')
+    model = DSSNMMF()
+    model.eval()
+    B = 2
+    mri = torch.rand(B, 1, *SHAPE)
+    pet = torch.rand(B, 1, *SHAPE)
+    ct = torch.rand(B, 1, *SHAPE)
+    clinical = torch.randn(B, 5)
+    has_pet = torch.tensor([True, False])
+    has_ct = torch.tensor([False, True])
+    out = model(mri=mri, pet=pet, ct=ct, clinical=clinical, has_pet=has_pet, has_ct=has_ct)
+    assert out['decision'].shape == (B, 3) and out['m_fused'].shape == (B, 8)
+
+
+@pytest.mark.parametrize('ablation', ['full', 'clinical', 'mri', 'pet', 'ct'])
 def test_cv_run_writes_report(synthetic, monkeypatch, ablation):
     monkeypatch.setattr(cfg, 'ABLATION', ablation)
     run_dir = synthetic / 'run'

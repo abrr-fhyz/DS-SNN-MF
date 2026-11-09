@@ -23,12 +23,12 @@ import torch
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from config import cfg
-from DataModule import (CrossSectionalWrapper, Sequences, SubjectDataset, load_dataset, longitudinal_collate_fn,
+from MODULE.DataModule import (CrossSectionalWrapper, Sequences, SubjectDataset, load_dataset, longitudinal_collate_fn,
                         make_holdout_split, make_stratified_folds, set_seed, split_sequences, subject_labels)
-from FusionModule import DSSNMMF
-from MetricsModule import Predictions, compute_metrics, macro_f1
+from MODULE.FusionModule import DSSNMMF
+from MODULE.MetricsModule import Predictions, compute_metrics, macro_f1
 from OtherModules.baselines import run_baselines
-from TrainerModule import Trainer, evaluate_longitudinal
+from MODULE.TrainerModule import Trainer, evaluate_longitudinal
 
 log = logging.getLogger("DS-SNN")
 _SUMMARY_KEYS = [

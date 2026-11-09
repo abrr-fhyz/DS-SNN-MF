@@ -6,9 +6,31 @@ Dataset-specific values live in ``DATASETS`` and are read through ``cfg.spec``.
 """
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, FrozenSet, Tuple
 
 import torch
+
+ABLATION_SOURCES = ('mri', 'pet', 'ct', 'clinical')
+
+
+def parse_ablation(value: str) -> FrozenSet[str]:
+    """``full`` or a plus/comma-separated subset of ``mri``, ``pet``, ``ct``, ``clinical``."""
+    raw = str(value or '').strip().lower()
+    if raw == 'full':
+        return frozenset(ABLATION_SOURCES)
+    parts = []
+    for token in raw.replace(',', '+').split('+'):
+        token = token.strip()
+        if not token:
+            continue
+        if token not in ABLATION_SOURCES:
+            raise ValueError(
+                f"Unknown ablation source {token!r}. Use 'full' or a plus-separated "
+                f"subset of {', '.join(ABLATION_SOURCES)}.")
+        parts.append(token)
+    if not parts:
+        raise ValueError("Ablation is empty.")
+    return frozenset(parts)
 
 
 @dataclass(frozen=True)
@@ -34,18 +56,13 @@ class Config:
     NUM_WORKERS = 1
 
     # ── Data ──────────────────────────────────────────────────────────────
-    DATASET    = 'oasis2'      # key of DATASETS
+    DATASET    = 'oasis3'      # key of DATASETS
     DATA_ROOT  = Path("data")
-    OASIS2_DIR = DATA_ROOT / "oasis2"
-    OASIS2_CSV = OASIS2_DIR / "oasis_longitudinal_demographics.xlsx"
     OASIS3_DIR = DATA_ROOT / "oasis3"
 
     # CDR/MMSE are excluded from inputs (they define the label). Sex is a demographic;
-    # eTIV/nWBV/ASF are imaging-derived volumes, not the diagnosis.
+    # eTIV/nWBV are imaging-derived volumes, not the diagnosis. 'APOE4' (allele count) can be added.
     DATASETS: Dict[str, dict] = {
-        'oasis2': dict(root=OASIS2_DIR, max_visits=5, train_visits='last',
-                       clinical_cols=('Age', 'EDUC', 'SES', 'eTIV', 'nWBV', 'ASF', 'MF')),
-        # SES/ASF do not exist in OASIS-3; 'APOE4' (allele count) can be added.
         'oasis3': dict(root=OASIS3_DIR, max_visits=8, train_visits='all',
                        clinical_cols=('Age', 'EDUC', 'MF', 'eTIV', 'nWBV')),
     }
@@ -55,7 +72,12 @@ class Config:
     OASIS3_DEMOGRAPHICS_FILE = 'OASIS3_demographics.csv'
     OASIS3_FREESURFER_FILE   = 'OASIS3_Freesurfer_output.csv'
     OASIS3_T1_GLOB           = '*T1w.nii*'
-    MAX_CDR_GAP_DAYS         = 365   # max |MR day − CDR day| for pairing a scan with a label
+    OASIS3_PET_GLOB          = '*_pet.nii*'
+    OASIS3_CT_GLOB           = '*_CT.nii*'
+    OASIS3_PET_TRACERS       = ('AV45', 'PIB', 'FDG')
+    MAX_CDR_GAP_DAYS         = 365   # max |MR/PET/CT day − CDR or MR day| for pairing
+    PET_LATE_FRAME_FRAC      = 1.0 / 3.0   # mean of the last third of a 4D PET series
+    CT_HU_WINDOW             = (0.0, 80.0)  # brain window on AC-CT
 
     MRI_SHAPE          = (96, 96, 96)
     PROCESSED_SUBDIR   = 'processed_v5'
@@ -72,8 +94,8 @@ class Config:
     VAL_FRAC    = 0.15
 
     # ── Ablation ──────────────────────────────────────────────────────────
-    # 'full' (MRI + clinical) | 'clinical' (tabular only) | 'mri' (MRI views only)
-    ABLATION = 'full'
+    # 'full' (MRI + PET + CT + clinical) or a plus-separated subset, e.g. 'clinical', 'mri+pet'
+    ABLATION = 'clinical'      # 'clinical' needs no processed volumes; switch to 'full' after preprocess
     ABLATION_PURE_DECISION = True  # ablations: prediction = BetP only
 
     # ── Spiking neural network ────────────────────────────────────────────
@@ -101,7 +123,7 @@ class Config:
     # ── Clinical branch ───────────────────────────────────────────────────
     USE_CLINICAL      = True
     CLINICAL_FEAT_DIM = 64
-    CLINICAL_LR       = 7e-4
+    CLINICAL_LR       = 1e-4
 
     # ── Dempster-Shafer ───────────────────────────────────────────────────
     EVIDENCE_CAP   = 18.0
@@ -124,7 +146,7 @@ class Config:
     DECISION_BLEND_MAX = 0.50
     DECISION_BLEND_KAPPA = 0.20
     DECISION_BLEND_SHARPNESS = 20.0
-    BRANCH_RELIABILITY = {'mtl': 0.90, 'clinical': 1.0}
+    BRANCH_RELIABILITY = {'mtl': 0.90, 'pet': 0.90, 'ct': 0.80, 'clinical': 1.0}
 
     # ── Loss ──────────────────────────────────────────────────────────────
     LAMBDA_AUX      = 0.8
@@ -187,6 +209,15 @@ class Config:
 
     def mri_in_channels(self) -> int:
         return 2 if self.MRI_USE_GM_CHANNEL else 1
+
+    def active_sources(self) -> FrozenSet[str]:
+        sources = parse_ablation(self.ABLATION)
+        if not self.USE_CLINICAL:
+            sources = sources - {'clinical'}
+        return sources
+
+    def uses(self, source: str) -> bool:
+        return source in self.active_sources()
 
     def snapshot(self) -> dict:
         """JSON-friendly copy of every setting, for run provenance."""

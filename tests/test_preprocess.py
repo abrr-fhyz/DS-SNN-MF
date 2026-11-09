@@ -4,6 +4,19 @@ import numpy as np
 from OtherModules import mri_preprocess as pre
 
 
+def test_collapse_dynamic_means_last_third_of_frames():
+    arr = np.stack([np.full((2, 2, 2), i, dtype=np.float32) for i in range(6)], axis=0)
+    out = pre.collapse_dynamic(arr, frac=1.0 / 3.0)
+    assert out.shape == (2, 2, 2) and np.allclose(out, 4.5)  # frames 4 and 5
+    assert np.array_equal(pre.collapse_dynamic(out), out)
+
+
+def test_apply_hu_window_clips():
+    arr = np.array([-20.0, 40.0, 200.0], dtype=np.float32)
+    out = pre.apply_hu_window(arr, (0.0, 80.0))
+    assert out.tolist() == [0.0, 40.0, 80.0]
+
+
 def test_intensity_normalise_is_per_subject_and_masks_background():
     rng = np.random.default_rng(0)
     data = rng.random((8, 8, 8)).astype(np.float32) * 500 + 100

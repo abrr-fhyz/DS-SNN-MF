@@ -5,11 +5,14 @@ Inputs (under ``spec.root``; filenames in ``config.py``)::
     OASIS3_UDSb4_cdr.csv            CDR per clinical visit            (required, labels)
     OASIS3_demographics.csv         sex, education, APOE, age at entry (needed for those features)
     OASIS3_Freesurfer_output.csv    ICV / brain volume per MR session  (needed for eTIV, nWBV)
-    OAS30001_MR_d0129/**/*T1w.nii*  one folder per MR session (or BIDS sub-*/ses-d*/)
+    OAS30001_MR_d0129/**/*T1w.nii*           one folder per MR session (or BIDS sub-*/ses-d*/)
+    OAS30001_AV45_d0129/**/*_pet.nii*        PET (AV45 / PIB / FDG); attached to nearest MR
+    OAS30001_CT_d0129/**/*_CT.nii*           CT; attached to nearest MR
 
 Scans and labels are paired by time: every MR session is matched to the nearest CDR visit
-within ``cfg.MAX_CDR_GAP_DAYS``. Column names are resolved through alias lists (see
-``docs/OASIS3.md``); a missing column raises an error listing what the file contains.
+within ``cfg.MAX_CDR_GAP_DAYS``. The nearest PET and CT within the same window are attached
+to that MR visit (missing PET/CT stay None). Column names are resolved through alias lists
+(see ``docs/OASIS3.md``); a missing column raises an error listing what the file contains.
 """
 import os
 import re
@@ -20,12 +23,13 @@ import numpy as np
 import pandas as pd
 
 from config import cfg, DatasetSpec
-from DataModule import (Sequences, cdr_to_label, make_visit, parse_sex, pick_column, read_table,
+from MODULE.DataModule import (Sequences, cdr_to_label, make_visit, parse_sex, pick_column, read_table,
                         resolve_table_path)
 
 SUPPORTED_FEATURES = ('Age', 'EDUC', 'MF', 'eTIV', 'nWBV', 'APOE4')
 _SESSION_ID = re.compile(r'(OAS3\d+)_MR_d(\d+)')
 _SESSION_DIR = re.compile(r'^OAS3\d+_MR_d\d+$')
+_MODALITY_DIR = re.compile(r'^(OAS3\d+)_(AV45|PIB|FDG|CT)_d(\d+)$', re.I)
 _BIDS_SUBJECT = re.compile(r'^sub-(OAS3\d+)$')
 _BIDS_SESSION = re.compile(r'^ses-d(\d+)$')
 _SUBJECT_ALIASES = ['OASISID', 'Subject', 'SubjectID', 'Subject_ID']
@@ -66,6 +70,49 @@ def index_mri_sessions(root: Path, t1_glob: str = cfg.OASIS3_T1_GLOB) -> Dict[st
     return found
 
 
+def _index_modality_dirs(root: Path, glob: str, tokens: set) -> Dict[str, str]:
+    """Map ``OAS3xxxx_{TOKEN}_dYYYY`` → first matching NIfTI (sorted, so run-01 wins)."""
+    found: Dict[str, str] = {}
+    tokens = {t.upper() for t in tokens}
+    for dirpath, dirnames, _ in os.walk(root):
+        match = _MODALITY_DIR.match(Path(dirpath).name)
+        if match is None or match.group(2).upper() not in tokens:
+            continue
+        dirnames[:] = []
+        sid = f"{match.group(1)}_{match.group(2).upper()}_d{int(match.group(3)):04d}"
+        scans = sorted(p for p in Path(dirpath).rglob(glob) if p.is_file())
+        if scans:
+            found[sid] = str(scans[0])
+    return found
+
+
+def index_pet_sessions(root: Path, pet_glob: str = cfg.OASIS3_PET_GLOB) -> Dict[str, str]:
+    """Map PET session id → first ``*_pet.nii*`` (AV45 / PIB / FDG)."""
+    return _index_modality_dirs(root, pet_glob, set(cfg.OASIS3_PET_TRACERS))
+
+
+def index_ct_sessions(root: Path, ct_glob: str = cfg.OASIS3_CT_GLOB) -> Dict[str, str]:
+    """Map CT session id → first ``*_CT.nii*``."""
+    return _index_modality_dirs(root, ct_glob, {'CT'})
+
+
+def _scans_by_subject(sessions: Dict[str, str]) -> Dict[str, List[tuple]]:
+    grouped: Dict[str, List[tuple]] = {}
+    for sid, path in sessions.items():
+        grouped.setdefault(sid.split('_')[0], []).append((float(sid.rsplit('_d', 1)[1]), sid, path))
+    return grouped
+
+
+def _nearest_scan(day: float, scans: List[tuple], max_gap: float):
+    """Return ``(session_id, path)`` of the nearest scan, or ``(None, None)`` if outside the window."""
+    if not scans:
+        return None, None
+    day_off, sid, path = min(scans, key=lambda item: abs(item[0] - day))
+    if abs(day_off - day) > max_gap:
+        return None, None
+    return sid, path
+
+
 # ──────────────────────────────────────────────────────────────
 # Clinical tables
 # ──────────────────────────────────────────────────────────────
@@ -96,13 +143,21 @@ def _apoe4_count(value) -> float:
     return float(digits.count('4')) if len(digits) >= 2 else float('nan')
 
 
+def _parse_oasis3_sex(value) -> float:
+    """OASIS-3 ``GENDER`` codes 1 = male, 2 = female; text values go through ``parse_sex``."""
+    code = str(value).strip()
+    if code in ('2', '2.0'):
+        return 0.0
+    return 1.0 if code in ('1', '1.0') else parse_sex(value)
+
+
 def _load_demographics(path: Path, features) -> pd.DataFrame:
     """Per-subject static features (``MF, EDUC, APOE4, age_entry``) indexed by subject id."""
     df = read_table(path)
     out = pd.DataFrame(index=df[pick_column(df, _SUBJECT_ALIASES, 'subject id in demographics')]
                        .astype(str).str.strip())
     if 'MF' in features:
-        out['MF'] = df[pick_column(df, ['M/F', 'Sex', 'Gender', 'MF'], 'sex')].map(parse_sex).values
+        out['MF'] = df[pick_column(df, ['M/F', 'Sex', 'Gender', 'MF'], 'sex')].map(_parse_oasis3_sex).values
     if 'EDUC' in features:
         out['EDUC'] = pd.to_numeric(df[pick_column(df, ['Education', 'EDUC', 'YearsEducation'], 'education')],
                                     errors='coerce').values
@@ -127,7 +182,13 @@ def _load_freesurfer(path: Path) -> pd.DataFrame:
         raise KeyError(f"FreeSurfer table has no column holding OAS3xxxx_MR_dXXXX ids; found {list(df.columns)}")
     icv = pd.to_numeric(df[pick_column(df, ['IntraCranialVol', 'ICV', 'eTIV'], 'intracranial volume')],
                         errors='coerce')
-    brain = pd.to_numeric(df[pick_column(df, ['BrainSegVol', 'BrainSegVolume'], 'brain volume')], errors='coerce')
+    brain_col = pick_column(df, ['BrainSegVol', 'BrainSegVolume'], 'brain volume', required=False)
+    if brain_col:
+        brain = pd.to_numeric(df[brain_col], errors='coerce')
+    else:   # OASIS-3 release table: no BrainSegVol, so use grey matter + cortical white matter
+        gray = pick_column(df, ['TotalGrayVol'], 'grey matter volume (BrainSegVol fallback)')
+        white = pick_column(df, ['CorticalWhiteMatterVol'], 'white matter volume (BrainSegVol fallback)')
+        brain = pd.to_numeric(df[gray], errors='coerce') + pd.to_numeric(df[white], errors='coerce')
     out = pd.DataFrame({'eTIV': icv.values, 'nWBV': (brain / icv).values}, index=sessions.values)
     return out[out.index.notna() & ~out.index.duplicated()]
 
@@ -167,6 +228,8 @@ def load_sequences(spec: DatasetSpec) -> Sequences:
         raise ValueError(f"OASIS-3 clinical columns {unknown} unsupported; choose from {SUPPORTED_FEATURES}")
 
     scans = index_mri_sessions(root)
+    pet_by_subject = _scans_by_subject(index_pet_sessions(root))
+    ct_by_subject = _scans_by_subject(index_ct_sessions(root))
     cdr_by_subject = _load_cdr(root / cfg.OASIS3_CDR_FILE)
     demo_path = root / cfg.OASIS3_DEMOGRAPHICS_FILE
     needs_demographics = any(f in features for f in ('MF', 'EDUC', 'APOE4')) or \
@@ -197,8 +260,11 @@ def load_sequences(spec: DatasetSpec) -> Sequences:
                       'eTIV': _lookup(freesurfer, sid, 'eTIV'), 'nWBV': _lookup(freesurfer, sid, 'nWBV')}
             if 'Age' in features:
                 values['Age'] = _age_at_scan(subject, day, cdr.loc[nearest], demographics)
+            pet_id, pet_path = _nearest_scan(day, pet_by_subject.get(subject, []), cfg.MAX_CDR_GAP_DAYS)
+            ct_id, ct_path = _nearest_scan(day, ct_by_subject.get(subject, []), cfg.MAX_CDR_GAP_DAYS)
             visits.append(make_visit(subject, sid, len(visits) + 1, path,
-                                     [values[f] for f in features], label))
+                                     [values[f] for f in features], label,
+                                     pet_id=pet_id, pet_path=pet_path, ct_id=ct_id, ct_path=ct_path))
         if visits:
             sequences.append(visits[-spec.max_visits:])
 

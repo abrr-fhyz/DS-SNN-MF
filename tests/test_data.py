@@ -4,10 +4,10 @@ import pytest
 import torch
 
 from config import cfg
-from DataModule import (ClinicalScaler, CrossSectionalWrapper, SubjectDataset, cdr_to_label,
+from MODULE.DataModule import (ClinicalScaler, CrossSectionalWrapper, SubjectDataset, cdr_to_label,
                         longitudinal_collate_fn, make_holdout_split, make_stratified_folds, make_visit,
                         split_sequences, subject_labels)
-from MetricsModule import (Predictions, balanced_accuracy, compute_metrics, confusion_matrix,
+from MODULE.MetricsModule import (Predictions, balanced_accuracy, compute_metrics, confusion_matrix,
                            expected_calibration_error, macro_f1, selective_accuracy)
 
 
@@ -95,6 +95,8 @@ def test_wrapper_last_vs_all_visits(monkeypatch):
     assert last.label_counts() == [3, 3, 3]
     item = every[0]
     assert item['clinical'].shape == (3,) and item['mri'].shape == (1, *cfg.MRI_SHAPE)
+    assert item['pet'].shape == (1, *cfg.MRI_SHAPE) and item['ct'].shape == (1, *cfg.MRI_SHAPE)
+    assert bool(item['has_pet']) is False and bool(item['has_ct']) is False
 
 
 def test_collate_pads_missing_visits(monkeypatch):
@@ -107,6 +109,7 @@ def test_collate_pads_missing_visits(monkeypatch):
     assert [v['has_visit'] for v in batch['visits']] == [[True, True], [False, True]]
     assert (batch['visits'][1]['clinical'][0] == 0).all()
     assert batch['label'].tolist() == [0, 1]
+    assert 'has_pet' in batch['visits'][0] and 'pet' in batch['visits'][0]
 
 
 def make_predictions(n=60, seed=0):

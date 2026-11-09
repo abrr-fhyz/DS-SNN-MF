@@ -8,9 +8,9 @@ PURPOSE
   keeping the split methodologically sound at the subject level. This is NOT
   a result to report as performance — it is a controlled contrast experiment:
 
-      "The model family can easily hit >90% on OASIS-2 when CDR/MMSE are
+      "The model family can easily hit >90% on OASIS-3 when CDR/MMSE are
        left in the feature set, even under a clean subject-level split.
-       Our honest subject-level CV (~0.56) is lower because we exclude those
+       Our honest subject-level CV is lower because we exclude those
        features — not because we failed to optimise or because of a leaky
        split."
 
@@ -24,7 +24,7 @@ LEAKS REMOVED (fixed vs. the original demo)
   - Subject leakage: the split is now drawn over *subjects*, not visits, so
     no subject's visits can appear in both train and val simultaneously.
 
-Run:  python leaky_demo.py
+Run:  python -m OtherModules.leaky_demo
 
 Outputs a short formal paragraph + metrics you can paste into a WIP paper
 "Methodological note" subsection.
@@ -42,70 +42,53 @@ from sklearn.metrics import accuracy_score, f1_score, classification_report
 from torch.utils.data import DataLoader, Dataset
 
 from config import cfg
+from MODULE.DataModule import load_dataset, pick_column, read_table
+from Oasis3Module import days_from_label
 
 
 # ── Leaky feature set ─────────────────────
-LEAKY_COLS = ['Age', 'EDUC', 'SES', 'eTIV', 'nWBV', 'ASF', 'MF', 'CDR', 'MMSE']
-#LEAKY_COLS = ['Age', 'EDUC', 'SES', 'eTIV', 'nWBV', 'ASF', 'MF']
-
-def _cdr_to_label(cdr) -> int | None:
-    try:
-        cdr = float(cdr)
-    except (TypeError, ValueError):
-        return None
-    if np.isnan(cdr):
-        return None
-    if cdr == 0.0:
-        return 0
-    if cdr == 0.5:
-        return 1
-    return 2
+LEAKY_COLS = [*cfg.CLINICAL_COLS, 'CDR', 'MMSE']
 
 
-def _mf(row) -> float:
-    for key in ('MF', 'M/F', 'Sex'):
-        if key in row.index and pd.notna(row[key]):
-            v = str(row[key]).strip().upper()
-            if v in ('M', 'MALE', '1'):
-                return 1.0
-            if v in ('F', 'FEMALE', '0'):
-                return 0.0
-    return np.nan
+def _cdr_rows_by_subject():
+    df = read_table(cfg.spec.root / cfg.OASIS3_CDR_FILE)
+    subject = pick_column(df, ['OASISID', 'Subject', 'SubjectID', 'Subject_ID'], 'subject id in CDR sheet')
+    cdr = pick_column(df, ['CDRTOT', 'cdr', 'CDR'], 'total CDR')
+    mmse = pick_column(df, ['MMSE', 'MMSCORE', 'mmse'], 'MMSE', required=False)
+    days_col = pick_column(df, ['days_to_visit', 'daystovisit'], 'days', required=False)
+    label_col = pick_column(df, ['OASIS_session_label', 'session_label', 'Session'], 'session label', required=False)
+    if days_col is None and label_col is None:
+        raise KeyError(f"CDR sheet needs a days column or session label; found {list(df.columns)}")
+    days = pd.to_numeric(df[days_col], errors='coerce') if days_col else df[label_col].map(days_from_label)
+    table = pd.DataFrame({
+        'subject': df[subject].astype(str).str.strip(),
+        'days': days.values,
+        'cdr': pd.to_numeric(df[cdr], errors='coerce').values,
+        'mmse': pd.to_numeric(df[mmse], errors='coerce').values if mmse else np.nan,
+    }).dropna(subset=['days', 'cdr'])
+    return {s: g.sort_values('days').reset_index(drop=True) for s, g in table.groupby('subject')}
 
 
-def load_leaky_table(csv_path: Path = cfg.OASIS2_CSV) -> tuple[np.ndarray, np.ndarray, list]:
-    path = csv_path if csv_path.exists() else csv_path.with_suffix('.csv')
-    if path.suffix.lower() in ('.xlsx', '.xls'):
-        df = pd.read_excel(path, engine='openpyxl' if path.suffix == '.xlsx' else None)
-    else:
-        df = pd.read_csv(path)
-    rename = {
-        'Subject ID': 'Subject.ID', 'MRI ID': 'MRI.ID', 'M/F': 'MF',
-    }
-    df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
-
+def load_leaky_table() -> tuple[np.ndarray, np.ndarray, list]:
+    """Clinical features plus the paired CDR/MMSE of each OASIS-3 visit (intentional leakage)."""
+    cdr_by_subject = _cdr_rows_by_subject()
     X, y, subjects = [], [], []
-    for _, row in df.iterrows():
-        lab = _cdr_to_label(row.get('CDR'))
-        if lab is None:
-            continue
-        feats = []
-        for c in LEAKY_COLS:
-            if c == 'MF':
-                feats.append(_mf(row))
-            elif c in row.index and pd.notna(row[c]):
-                try:
-                    feats.append(float(row[c]))
-                except (TypeError, ValueError):
-                    feats.append(np.nan)
-            else:
-                feats.append(np.nan)
-        X.append(feats)
-        y.append(lab)
-        subjects.append(str(row.get('Subject.ID', '')))
+    for sequence in load_dataset():
+        for visit in sequence:
+            sid = str(visit['subject_id'])
+            rows = cdr_by_subject.get(sid)
+            if rows is None or len(rows) == 0:
+                continue
+            day = days_from_label(visit['mri_id'])
+            nearest = int(np.abs(rows['days'].values - day).argmin())
+            cdr = float(rows.at[nearest, 'cdr'])
+            mmse = float(rows.at[nearest, 'mmse'])
+            feats = list(np.asarray(visit['clinical_raw'], dtype=np.float64)) + [cdr, mmse]
+            X.append(feats)
+            y.append(int(visit['label']))
+            subjects.append(sid)
     X = np.asarray(X, dtype=np.float64)
     y = np.asarray(y, dtype=np.int64)
-    # Impute + z-score (fit on all rows — another mild leak).
     col_mean = np.nanmean(X, axis=0)
     inds = np.where(np.isnan(X))
     X[inds] = np.take(col_mean, inds[1])
@@ -227,7 +210,7 @@ def run_leaky(seed: int = 0, max_epochs: int = 80, val_frac: float = 0.2):
         "Under an intentionally leaky feature set — including CDR/MMSE as input\n"
         "features while defining labels from CDR (label leakage) — a simple MLP\n"
         f"reaches {peak_val_acc*100:.1f}% validation accuracy / {peak_val_f1*100:.1f}% "
-        "macro-F1 on OASIS-2,\n"
+        "macro-F1 on OASIS-3,\n"
         "even under a clean subject-level split with zero subject overlap between\n"
         "train and validation. This demonstrates that high single-split validation\n"
         "peaks are easy to obtain when a near-identity feature is left in the input\n"

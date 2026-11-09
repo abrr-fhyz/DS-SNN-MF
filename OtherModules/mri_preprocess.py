@@ -1,7 +1,7 @@
-"""Offline MRI preprocessing for any registered dataset (run once before training).
+"""Offline OASIS-3 imaging preprocessing (run once before training).
 
-Pipeline per session
---------------------
+MRI (unchanged)
+---------------
   1. Load the raw T1 preserving NIfTI affine, orientation and spacing.
   2. Skull-strip with HD-BET on GPU. No fallback: a failure is recorded in the run summary.
   3. N4 bias-field correction inside the HD-BET brain mask (SimpleITK).
@@ -10,25 +10,22 @@ Pipeline per session
   5. One resample onto a FIXED MNI reference grid (identical for every subject and split).
   6. Per-subject intensity normalisation and an optional soft GM channel.
 
-No cohort statistics enter any step, so train/validation/test share the same fixed template.
+PET / CT (no skull-strip)
+-------------------------
+  PET: collapse a 4D series to the mean of the last third of frames, then affine to MNI
+  (paired T1 in MNI if that MRI is already processed).
+  CT: clip to a brain HU window, then the same affine. Bone is kept.
 
-Scaling
--------
-Sessions are processed in chunks (``--chunk``). HD-BET runs once per chunk on a whole folder
-(one model load instead of one per volume); N4 + registration then run in ``--workers``
-processes. Sessions whose tensor exists are skipped, so re-running with a larger ``--limit``
-or another ``--offset`` is safe and resumable.
-
-Output per session ``<MRI_PROCESSED_DIR>/<mri_id>/``:
-    t1.nii.gz, mask.nii.gz, [gm.nii.gz], tensor_DxHxW.pt (C = 1 or 2), meta.json
+Output per session ``<MRI_PROCESSED_DIR>/<session_id>/``:
+    tensor_DxHxW.pt; MRI also writes t1.nii.gz, mask.nii.gz, [gm.nii.gz], meta.json
 
 Usage (from the project root)::
 
-    python -m OtherModules.mri_preprocess --dataset oasis2
-    python -m OtherModules.mri_preprocess --dataset oasis3 --chunk 32 --workers 4
+    python -m OtherModules.mri_preprocess --chunk 16 --workers 4
     python -m OtherModules.mri_preprocess --limit 5 --force        # smoke test
+    python -m OtherModules.mri_preprocess --modality pet
 
-Requires nibabel, SimpleITK, templateflow and the ``hd-bet`` CLI on PATH.
+Requires nibabel, SimpleITK, templateflow. MRI also needs the ``hd-bet`` CLI on PATH.
 """
 from __future__ import annotations
 
@@ -47,7 +44,7 @@ import numpy as np
 import torch
 
 from config import cfg
-from DataModule import load_dataset, processed_tensor_path
+from MODULE.DataModule import load_dataset, processed_tensor_path
 
 HD_BET_DEVICE = os.environ.get('HD_BET_DEVICE', 'cuda:0')
 TEMPLATE_SPEC = dict(template='MNI152NLin2009cAsym', resolution=1, desc='brain', suffix='T1w', extension='.nii.gz')
@@ -66,27 +63,9 @@ def _sitk():
 # I/O
 # ──────────────────────────────────────────────────────────────
 
-def _materialise_analyze(path: Path) -> Path:
-    """Create .img/.hdr twins for OASIS-2 short '.nifti' Analyze pairs."""
-    if path.suffix.lower() != '.nifti':
-        return path
-    img_twin, hdr_src, hdr_twin = path.with_suffix('.img'), Path(str(path) + '.hdr'), path.with_suffix('.hdr')
-    for src, twin in ((path, img_twin), (hdr_src, hdr_twin)):
-        if twin.exists() or not src.exists():
-            continue
-        try:
-            os.link(src, twin)
-        except OSError:
-            try:
-                os.symlink(src.name, twin)
-            except OSError:
-                shutil.copy2(src, twin)
-    return img_twin
-
-
 def _read(path: Path, pixel=None):
     sitk = _sitk()
-    return sitk.ReadImage(str(_materialise_analyze(Path(path))), pixel or sitk.sitkFloat32)
+    return sitk.ReadImage(str(path), pixel or sitk.sitkFloat32)
 
 
 def _nib_affine(img) -> np.ndarray:
@@ -110,6 +89,33 @@ def discover_sessions() -> List[Tuple[str, Path]]:
         for visit in sequence:
             seen.setdefault(str(visit['mri_id']), Path(visit['mri_path']))
     return list(seen.items())
+
+
+def discover_attached(id_key: str, path_key: str) -> List[Tuple[str, Path, Optional[str]]]:
+    """Unique attached PET/CT sessions: (session_id, raw path, paired mri_id)."""
+    seen: Dict[str, Tuple[Path, Optional[str]]] = {}
+    for sequence in load_dataset():
+        for visit in sequence:
+            sid, path = visit.get(id_key), visit.get(path_key)
+            if sid and path:
+                seen.setdefault(str(sid), (Path(path), visit.get('mri_id')))
+    return [(sid, raw, None if mri is None else str(mri)) for sid, (raw, mri) in seen.items()]
+
+
+def collapse_dynamic(arr: np.ndarray, frac: Optional[float] = None) -> np.ndarray:
+    """If 4D ``(T, Z, Y, X)``, mean of the last ``frac`` of frames; otherwise return as-is."""
+    if arr.ndim != 4:
+        return arr
+    frac = cfg.PET_LATE_FRAME_FRAC if frac is None else frac
+    t = arr.shape[0]
+    n_keep = max(int(round(t * frac)), 1)
+    start = max(t - n_keep, 0)
+    return arr[start:].mean(axis=0).astype(np.float32)
+
+
+def apply_hu_window(arr: np.ndarray, window: Optional[Tuple[float, float]] = None) -> np.ndarray:
+    lo, hi = window or cfg.CT_HU_WINDOW
+    return np.clip(arr, lo, hi).astype(np.float32)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -241,6 +247,38 @@ def register_to_mni(brain_img, brain_mask, fixed_img, reference_img):
     return warped, warped_mask
 
 
+def _ensure_3d(img):
+    """Collapse a 4D SimpleITK image to 3D; pass 3D through."""
+    sitk = _sitk()
+    dim = img.GetDimension()
+    arr = sitk.GetArrayFromImage(img)
+    if arr.ndim == 3:
+        return img
+    if arr.ndim != 4:
+        raise RuntimeError(f"expected 3D or 4D image, got array ndim={arr.ndim}")
+    collapsed = collapse_dynamic(arr)
+    out = sitk.GetImageFromArray(collapsed.astype(np.float32))
+    out.SetSpacing(img.GetSpacing()[:3])
+    out.SetOrigin(img.GetOrigin()[:3])
+    direction = np.array(img.GetDirection()).reshape(dim, dim)
+    out.SetDirection(tuple(direction[:3, :3].ravel()))
+    return out
+
+
+def _foreground_mask(img):
+    sitk = _sitk()
+    arr = sitk.GetArrayFromImage(img)
+    if arr.size == 0:
+        mask = np.ones(arr.shape, dtype=np.uint8)
+    else:
+        mask = (arr > np.percentile(arr, 10)).astype(np.uint8)
+        if int(mask.sum()) == 0:
+            mask[:] = 1
+    out = sitk.GetImageFromArray(mask)
+    out.CopyInformation(img)
+    return out
+
+
 def intensity_normalise(data: np.ndarray, mask: np.ndarray, pct: Tuple[float, float]) -> np.ndarray:
     """Per-subject percentile clip and [0, 1] rescale inside the mask; background zeroed."""
     brain = data[mask] if mask.any() else data.ravel()
@@ -326,12 +364,53 @@ def finish_session(job: dict) -> dict:
         return {'mri_id': mid, 'status': 'fail', 'raw': job['raw'], 'error': str(exc)}
 
 
+def finish_plain_session(job: dict) -> dict:
+    """Affine PET or CT onto the MNI reference grid (no skull-strip)."""
+    sitk = _sitk()
+    sid, out_dir, shape = job['session_id'], Path(job['out_dir']), tuple(job['target_shape'])
+    try:
+        img = _ensure_3d(_read(job['raw']))
+        if job['kind'] == 'ct':
+            windowed = sitk.GetImageFromArray(apply_hu_window(sitk.GetArrayFromImage(img)))
+            windowed.CopyInformation(img)
+            img = windowed
+        if job.get('fixed_path') and Path(job['fixed_path']).exists():
+            fixed = reference = _read(Path(job['fixed_path']))
+        else:
+            fixed, reference = _template(job['template_path'], shape)
+        warped, warped_mask = register_to_mni(img, _foreground_mask(img), fixed, reference)
+        data = sitk.GetArrayFromImage(warped).astype(np.float32)
+        mask_np = sitk.GetArrayFromImage(warped_mask).astype(bool)
+        if not mask_np.any():
+            mask_np = np.abs(data) > 0
+        norm = intensity_normalise(data, mask_np, cfg.MRI_PERCENTILE_CLIP)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(torch.from_numpy(norm[None].astype(np.float32)), job['tensor_path'])
+        def as_image(arr):
+            out = sitk.GetImageFromArray(arr.astype(np.float32))
+            out.CopyInformation(reference)
+            return out
+        _write(as_image(norm), out_dir / f"{job['kind']}.nii.gz")
+        _write(as_image(mask_np.astype(np.float32)), out_dir / 'mask.nii.gz')
+        (out_dir / 'meta.json').write_text(json.dumps({
+            'raw': job['raw'], 'kind': job['kind'], 'shape': list(shape),
+            'paired_mri': job.get('mri_id'), 'skull_strip': None,
+            'hu_window': list(cfg.CT_HU_WINDOW) if job['kind'] == 'ct' else None,
+            'pet_late_frame_frac': cfg.PET_LATE_FRAME_FRAC if job['kind'] == 'pet' else None,
+            'registration': 'sitk_affine_mattes_mi_multires', 'template': TEMPLATE_SPEC,
+            'fixed': job.get('fixed_path') or job['template_path'],
+        }, indent=2))
+        return {'session_id': sid, 'status': 'ok'}
+    except Exception as exc:  # noqa: BLE001
+        return {'session_id': sid, 'status': 'fail', 'raw': job['raw'], 'error': str(exc)}
+
+
 # ──────────────────────────────────────────────────────────────
 # Driver
 # ──────────────────────────────────────────────────────────────
 
-def run_preprocess(out_dir: Optional[Path] = None, use_gm: Optional[bool] = None, force: bool = False,
-                   offset: int = 0, limit: Optional[int] = None, chunk: int = 16, workers: int = 1) -> None:
+def _run_mri_preprocess(out_dir: Path, use_gm: Optional[bool], force: bool, offset: int,
+                        limit: Optional[int], chunk: int, workers: int) -> None:
     out_dir = Path(out_dir or cfg.MRI_PROCESSED_DIR)
     use_gm = cfg.MRI_USE_GM_CHANNEL if use_gm is None else use_gm
     shape = tuple(cfg.MRI_SHAPE)
@@ -388,20 +467,82 @@ def run_preprocess(out_dir: Optional[Path] = None, use_gm: Optional[bool] = None
     print(f"Done. ok={ok} skip={skipped} fail={len(failures)}")
 
 
+def run_plain_preprocess(kind: str, out_dir: Path, force: bool = False, offset: int = 0,
+                         limit: Optional[int] = None, workers: int = 1) -> None:
+    id_key, path_key = ('pet_id', 'pet_path') if kind == 'pet' else ('ct_id', 'ct_path')
+    sessions = discover_attached(id_key, path_key)
+    if not sessions:
+        print(f"No attached {kind.upper()} sessions under {cfg.spec.root}")
+        return
+    end = offset + limit if limit is not None else len(sessions)
+    window = sessions[offset:end]
+    tensor_path = lambda sid: out_dir / sid / processed_tensor_path(sid).name  # noqa: E731
+    pending = [(sid, raw, mri) for sid, raw, mri in window if force or not tensor_path(sid).exists()]
+    template_path = fetch_mni_template()
+    print(f"{kind.upper()}: {len(sessions)} attached | window [{offset}:{end}] = {len(window)} | "
+          f"to process {len(pending)} | out {out_dir}")
+    jobs = []
+    for sid, raw, mri in pending:
+        paired = out_dir / str(mri) / 't1.nii.gz' if mri else None
+        jobs.append({
+            'session_id': sid, 'raw': str(raw), 'kind': kind, 'mri_id': mri,
+            'out_dir': str(out_dir / sid), 'tensor_path': str(tensor_path(sid)),
+            'template_path': str(template_path), 'target_shape': tuple(cfg.MRI_SHAPE),
+            'fixed_path': str(paired) if paired and paired.exists() else None,
+        })
+    failures, ok = [], 0
+    pool = ProcessPoolExecutor(max_workers=workers) if workers > 1 else None
+    try:
+        for res in (pool.map(finish_plain_session, jobs) if pool else map(finish_plain_session, jobs)):
+            if res['status'] == 'ok':
+                ok += 1
+            else:
+                failures.append(res)
+            print(f"  {res['session_id']}: {res['status']}"
+                  + (f" ({res['error']})" if res['status'] == 'fail' else ""))
+    finally:
+        if pool:
+            pool.shutdown()
+    skipped = len(window) - len(pending)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f'preprocess_summary_{kind}_{offset}_{end}.json').write_text(json.dumps({
+        'dataset': cfg.DATASET, 'kind': kind, 'ok': ok, 'skip': skipped, 'fail': len(failures),
+        'offset': offset, 'end': end, 'total_sessions': len(sessions), 'failures': failures,
+    }, indent=2))
+    print(f"Done {kind}. ok={ok} skip={skipped} fail={len(failures)}")
+
+
+def run_preprocess(out_dir: Optional[Path] = None, use_gm: Optional[bool] = None, force: bool = False,
+                   offset: int = 0, limit: Optional[int] = None, chunk: int = 16, workers: int = 1,
+                   modality: str = 'all') -> None:
+    modality = str(modality or 'all').lower()
+    if modality not in ('all', 'mri', 'pet', 'ct'):
+        raise SystemExit(f"--modality must be all|mri|pet|ct, got {modality!r}")
+    out_dir = Path(out_dir or cfg.MRI_PROCESSED_DIR)
+    if modality in ('all', 'mri'):
+        _run_mri_preprocess(out_dir, use_gm, force, offset, limit, chunk, workers)
+    if modality in ('all', 'pet'):
+        run_plain_preprocess('pet', out_dir, force=force, offset=offset, limit=limit, workers=workers)
+    if modality in ('all', 'ct'):
+        run_plain_preprocess('ct', out_dir, force=force, offset=offset, limit=limit, workers=workers)
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description='MRI preprocess (TemplateFlow MNI + HD-BET)')
+    ap = argparse.ArgumentParser(description='OASIS-3 MRI/PET/CT preprocess (TemplateFlow MNI)')
     ap.add_argument('--dataset', choices=list(cfg.DATASETS), default=cfg.DATASET)
     ap.add_argument('--out-dir', type=Path, default=None)
     ap.add_argument('--force', action='store_true', help='reprocess even if the tensor exists')
     ap.add_argument('--offset', type=int, default=0, help='start index into the session list')
     ap.add_argument('--limit', type=int, default=None, help='number of sessions from --offset')
-    ap.add_argument('--chunk', type=int, default=16, help='sessions per HD-BET call')
+    ap.add_argument('--chunk', type=int, default=16, help='sessions per HD-BET call (MRI)')
     ap.add_argument('--workers', type=int, default=1, help='processes for N4 + registration')
     ap.add_argument('--no-gm', action='store_true', help='skip the GM channel')
+    ap.add_argument('--modality', choices=['all', 'mri', 'pet', 'ct'], default='all')
     args = ap.parse_args()
     cfg.DATASET = args.dataset
     run_preprocess(out_dir=args.out_dir, use_gm=False if args.no_gm else None, force=args.force,
-                   offset=args.offset, limit=args.limit, chunk=args.chunk, workers=args.workers)
+                   offset=args.offset, limit=args.limit, chunk=args.chunk, workers=args.workers,
+                   modality=args.modality)
 
 
 if __name__ == '__main__':

@@ -12,10 +12,10 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
 from config import cfg
-from DSModule import TemporalAccumulator, pignistic_probability
-from FusionModule import DSSNMMF
-from LossModule import DSSNNLoss
-from MetricsModule import Predictions, compute_metrics, macro_f1
+from MODULE.DSModule import TemporalAccumulator, pignistic_probability
+from MODULE.FusionModule import DSSNMMF
+from MODULE.LossModule import DSSNNLoss
+from MODULE.MetricsModule import Predictions, compute_metrics, macro_f1
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s | %(message)s')
 log = logging.getLogger("DS-SNN")
@@ -23,9 +23,10 @@ _LOSS_TERMS = ('ce', 'aux', 'ds', 'conflict', 'ign')
 
 
 def build_param_groups(model: DSSNMMF) -> List[dict]:
-    """Clinical branch + aux head train at CLINICAL_LR, the MRI encoder / heads at LEARNING_RATE.
-    Single-source models use one group."""
-    if not (model.use_mri and model.use_clinical):
+    """Clinical branch + aux head train at CLINICAL_LR, imaging encoders at LEARNING_RATE.
+    Models without both a clinical branch and an imaging branch use one group."""
+    imaging = model.use_mri or model.use_pet or model.use_ct
+    if not (imaging and model.use_clinical):
         lr = cfg.CLINICAL_LR if model.use_clinical else cfg.LEARNING_RATE
         return [{'params': list(model.parameters()), 'lr': lr}]
     hot = (list(model.clinical_encoder.parameters()) + list(model.ds_clinical.parameters())
@@ -34,6 +35,11 @@ def build_param_groups(model: DSSNMMF) -> List[dict]:
     cold = [p for p in model.parameters() if id(p) not in hot_ids]
     groups = [{'params': hot, 'lr': cfg.CLINICAL_LR}]
     return groups + [{'params': cold, 'lr': cfg.LEARNING_RATE}] if cold else groups
+
+
+def _model_kwargs(batch: dict, device: torch.device) -> dict:
+    keys = ('mri', 'pet', 'ct', 'clinical', 'has_pet', 'has_ct')
+    return {k: batch[k].to(device) for k in keys if k in batch}
 
 
 class Trainer:
@@ -46,6 +52,7 @@ class Trainer:
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.NUM_EPOCHS, eta_min=cfg.MIN_LR)
         self.best_val_f1 = self.best_val_acc = 0.0
         self.best_score = -1.0
+        self.eval_model = self.model
         log.info(f"  AdamW LRs: {[round(g['lr'], 6) for g in groups]}")
 
     def load_checkpoint(self, path: str) -> None:
@@ -68,7 +75,7 @@ class Trainer:
         preds, labels_all = [], []
         for step, batch in enumerate(loader):
             labels = batch['label'].to(self.device)
-            out = self.model(mri=batch['mri'].to(self.device), clinical=batch['clinical'].to(self.device))
+            out = self.model(**_model_kwargs(batch, self.device))
             losses = self.loss_fn(out, labels)
             (losses['total'] / accum).backward()
             if (step + 1) % accum == 0:
@@ -97,7 +104,7 @@ class Trainer:
         keys = ('labels', 'probs', 'uncertainty', 'K', 'gate', 'blend', 'conflict_flag')
         cols: Dict[str, list] = {k: [] for k in keys}
         for batch in loader:
-            out = self.model(mri=batch['mri'].to(self.device), clinical=batch['clinical'].to(self.device))
+            out = self.model(**_model_kwargs(batch, self.device))
             for key, value in zip(keys, (batch['label'], out['decision'], out['uncertainty'], out['K'],
                                          out['conflict_gate'], out['decision_blend'], out['conflict_flag'])):
                 cols[key].append(value.detach().cpu().numpy())
@@ -208,7 +215,7 @@ def evaluate_longitudinal(model: torch.nn.Module, loader: DataLoader, device: to
             real = torch.tensor(visit['has_visit'], dtype=torch.bool, device=device)
             if not real.any():
                 continue
-            out = model(mri=visit['mri'].to(device), clinical=visit['clinical'].to(device))
+            out = model(**_model_kwargs(visit, device))
             last_decision[real] = out['decision'][real]
             acc.accumulate(out['m_fused'], mask=real)
         last_preds.extend(last_decision.argmax(dim=1).cpu().tolist())

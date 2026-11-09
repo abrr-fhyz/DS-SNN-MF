@@ -3,7 +3,8 @@ import pandas as pd
 import pytest
 
 from config import DatasetSpec, cfg
-from Oasis3Module import days_from_label, index_mri_sessions, load_sequences, session_id
+from Oasis3Module import (days_from_label, index_ct_sessions, index_mri_sessions, index_pet_sessions,
+                          load_sequences, session_id)
 
 COLS = ('Age', 'EDUC', 'MF', 'eTIV', 'nWBV', 'APOE4')
 
@@ -74,6 +75,34 @@ def test_visits_labels_and_features(root):
     assert nwbv == pytest.approx(0.7)
     assert a[2]['clinical_raw'][3] != a[2]['clinical_raw'][3]   # no FreeSurfer row → NaN, imputed later
     assert seqs['OAS30002'][0]['clinical_raw'][2] == 0          # BIDS subject, female
+
+
+def test_release_tables_gender_codes_and_brain_volume_fallback(root):
+    pd.DataFrame({
+        'OASISID': ['OAS30001', 'OAS30002'], 'GENDER': [1, 2], 'EDUC': [16, 12], 'AgeatEntry': [69.5, 79.9],
+    }).to_csv(root / cfg.OASIS3_DEMOGRAPHICS_FILE, index=False)
+    pd.DataFrame({
+        'MR_session': ['OAS30001_MR_d0100'], 'IntraCranialVol': [1500000.0],
+        'TotalGrayVol': [600000.0], 'CorticalWhiteMatterVol': [450000.0],
+    }).to_csv(root / cfg.OASIS3_FREESURFER_FILE, index=False)
+    seqs = {s[0]['subject_id']: s for s in load_sequences(spec(root, cols=('MF', 'nWBV')))}
+    assert seqs['OAS30001'][0]['clinical_raw'][0] == 1
+    assert seqs['OAS30002'][0]['clinical_raw'][0] == 0
+    assert seqs['OAS30001'][0]['clinical_raw'][1] == pytest.approx(0.7)
+
+
+def test_pet_ct_attach_within_gap_and_skip_beyond(root):
+    touch(root / "OAS30001_AV45_d0120" / "pet1" / "sub-OAS30001_ses-d0120_acq-AV45_pet.nii.gz")
+    touch(root / "OAS30001_CT_d0480" / "CT1" / "sub-OAS30001_sess-d0480_CT.nii.gz")
+    touch(root / "OAS30001_PIB_d2500" / "pet1" / "sub-OAS30001_ses-d2500_acq-PIB_pet.nii.gz")
+    pets = index_pet_sessions(root)
+    cts = index_ct_sessions(root)
+    assert 'OAS30001_AV45_d0120' in pets and 'OAS30001_PIB_d2500' in pets
+    assert 'OAS30001_CT_d0480' in cts
+    a = next(s for s in load_sequences(spec(root)) if s[0]['subject_id'] == 'OAS30001')
+    assert a[0]['pet_id'] == 'OAS30001_AV45_d0120' and a[0]['ct_id'] is None
+    assert a[1]['ct_id'] == 'OAS30001_CT_d0480' and a[1]['pet_id'] is None
+    assert a[2]['pet_id'] is None and a[2]['ct_id'] is None
 
 
 def test_keeps_latest_visits(root):

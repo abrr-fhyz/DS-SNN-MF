@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from config import cfg
-from DSModule import FULL_FRAME, SINGLETONS
+from MODULE.DSModule import FULL_FRAME, SINGLETONS
 
 _IGNORANCE_TARGETS = (cfg.IGNORANCE_TARGET_CN, cfg.IGNORANCE_TARGET_MCI, cfg.IGNORANCE_TARGET_AD)
 
