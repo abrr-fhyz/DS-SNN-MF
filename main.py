@@ -4,6 +4,7 @@
     python main.py --repeats 3                      # 3x repeated CV
     python main.py --ablation full --single-split
     python main.py --ablation mri+pet+clinical
+    python main.py --clinical-model mlp
 """
 import argparse
 import logging
@@ -29,6 +30,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--seed', type=int, default=cfg.SEED)
     p.add_argument('--single-split', action='store_true', help='one train/val/test split instead of CV')
     p.add_argument('--out-dir', default=str(cfg.OUT_DIR))
+    p.add_argument('--clinical-model', choices=['mlp', 'ensemble'], default=None,
+                   help="clinical source: jointly-trained MLP or frozen tabular ensemble (default: config)")
     return p.parse_args()
 
 
@@ -39,6 +42,8 @@ def apply_args(args: argparse.Namespace) -> None:
     cfg.TRAIN_VISITS = args.train_visits
     cfg.USE_CV = not args.single_split
     cfg.OUT_DIR = Path(args.out_dir)
+    if args.clinical_model:
+        cfg.CLINICAL_MODEL = args.clinical_model
 
 
 def main() -> None:
@@ -46,7 +51,8 @@ def main() -> None:
     spec = cfg.spec
     log.info(f"Device: {cfg.DEVICE} | dataset={spec.name} | ablation={cfg.ABLATION} "
              f"sources={sorted(cfg.active_sources())} | "
-             f"train_visits={spec.train_visits} | views={list(cfg.MRI_VIEWS)} | clinical={list(spec.clinical_cols)} | "
+             f"train_visits={spec.train_visits} | views={list(cfg.MRI_VIEWS)} | "
+             f"clinical={list(spec.clinical_cols)} model={cfg.CLINICAL_MODEL} | "
              f"kappa={cfg.CONFLICT_KAPPA} rule={cfg.CONFLICT_RULE} | clin_lr={cfg.CLINICAL_LR} "
              f"mri_lr={cfg.LEARNING_RATE} | blend_max={cfg.DECISION_BLEND_MAX}")
     run_experiment(torch.device(cfg.DEVICE))

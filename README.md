@@ -27,7 +27,7 @@ Multi-view structural MRI, PET, CT and clinical features are fused with Dempster
 
 ## Usage
 
-Install: Python 3.10+, `torch`, `numpy`, `pandas`, `scikit-learn`, `nibabel`, `openpyxl`, `pytest`. Preprocessing additionally needs `SimpleITK`, `templateflow` and the `hd-bet` CLI.
+Install: Python 3.10+, `torch`, `numpy`, `pandas`, `scikit-learn`, `nibabel`, `openpyxl`, `pytest`. The clinical ensemble also wants `xgboost`, `lightgbm`, and `catboost` (optional; sklearn RF / Extra Trees / SVM still vote if they are missing). Preprocessing additionally needs `SimpleITK`, `templateflow` and the `hd-bet` CLI.
 
 1. Place data under `data/oasis3/` (layout in `docs/OASIS3.md`).
 2. Preprocess MRI once (then PET/CT). Training reads the processed tensors and fails if they are missing.
@@ -36,9 +36,10 @@ Install: Python 3.10+, `torch`, `numpy`, `pandas`, `scikit-learn`, `nibabel`, `o
    python -m OtherModules.mri_preprocess --chunk 1 --workers 1
    ```
    Keep `--chunk 1` on 8 GB GPUs (HD-BET v2 otherwise spawns four nnU-Net workers and dies). Interrupted runs skip finished sessions; `--offset` / `--limit` select a slice.
-3. Run the experiment.
+3. Run the experiment. Clinical default is a frozen LightGBM / XGBoost / CatBoost / RF / Extra Trees / RBF-SVM vote (`--clinical-model mlp` restores the old jointly-trained MLP).
    ```bash
    python main.py
+   python main.py --clinical-model mlp
    ```
 4. Baselines alone: `python -m OtherModules.baselines`.
 5. Tests: `python -m pytest tests`. They use synthetic data and need no dataset or GPU.

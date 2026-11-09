@@ -124,6 +124,9 @@ class Config:
     USE_CLINICAL      = True
     CLINICAL_FEAT_DIM = 64
     CLINICAL_LR       = 1e-4
+    CLINICAL_MODEL    = 'ensemble'   # 'mlp' | 'ensemble'
+    CLINICAL_ENSEMBLE_MEMBERS = ('lgbm', 'xgb', 'catboost', 'rf', 'extratrees', 'svm')
+    CLINICAL_ENSEMBLE_COMBINE = 'soft_vote'
 
     # ── Dempster-Shafer ───────────────────────────────────────────────────
     EVIDENCE_CAP   = 18.0
@@ -218,6 +221,12 @@ class Config:
 
     def uses(self, source: str) -> bool:
         return source in self.active_sources()
+
+    def clinical_is_ensemble(self) -> bool:
+        model = str(self.CLINICAL_MODEL or 'mlp').strip().lower()
+        if model not in ('mlp', 'ensemble'):
+            raise ValueError(f"CLINICAL_MODEL must be 'mlp' or 'ensemble', got {self.CLINICAL_MODEL!r}")
+        return model == 'ensemble' and 'clinical' in self.active_sources()
 
     def snapshot(self) -> dict:
         """JSON-friendly copy of every setting, for run provenance."""

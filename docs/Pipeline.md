@@ -7,7 +7,7 @@ The running model has four sources:
 1. One medial-temporal crop of a registered T1 MRI, encoded by a 3D spiking network.
 2. A whole-volume PET (AV45 / PIB / FDG share one encoder), encoded by a second 3D spiking network.
 3. A whole-volume CT, encoded by a third 3D spiking network.
-4. A short clinical table, encoded by an MLP.
+4. A short clinical table. Default `CLINICAL_MODEL='ensemble'`: LightGBM, XGBoost, CatBoost, random forest, extra trees and an RBF-SVM, fit once per fold on train visits, then frozen. `CLINICAL_MODEL='mlp'` is the old jointly-trained MLP. Clinical-only ablation reports the ensemble probabilities.
 
 Each present source becomes a Dempster–Shafer belief assignment over {CN, MCI, AD}. They are fused in order MRI → PET → CT → clinical. A missing PET or CT does not drop the visit: that encoder is skipped and a vacuous assignment (Dempster identity) is used instead. Extra MRI boxes (`whole`, `hippocampus`, `ventricles`, `amygdala`) stay commented out in `config.py`.
 
@@ -24,15 +24,15 @@ flowchart LR
   snnPet --> petBba[PET belief assignment]
   ctVol[CT volume 96 cubed] --> snnCt[SNN CT]
   snnCt --> ctBba[CT belief assignment]
-  table[Clinical table] --> mlp[Clinical MLP]
-  mlp --> clinBba[Clinical belief assignment]
+  table[Clinical table] --> clin[MLP or tabular ensemble]
+  clin --> clinBba[Clinical belief assignment]
   mriBba --> disc[Shafer discount]
   petBba --> disc
   ctBba --> disc
   clinBba --> disc
   disc --> gate[Dempster blended with PCR5]
   gate --> betp[Pignistic probability]
-  mlp --> aux[Clinical softmax]
+  clin --> aux[Clinical softmax]
   betp --> decision[Conflict-dependent mix]
   aux --> decision
 ```
@@ -60,6 +60,7 @@ Training reads `data/oasis3/processed_v5/<session>/tensor_96x96x96.pt` for MRI, 
 python -m OtherModules.mri_preprocess --modality mri --limit 1 --chunk 1 --workers 1 --force
 python main.py --folds 2 --single-split
 python main.py --ablation mri+pet+clinical
+python main.py --clinical-model mlp
 ```
 
 `--ablation clinical` skips volume reads and still requires the T1 paths and the three tables, because visits without a T1 are dropped.

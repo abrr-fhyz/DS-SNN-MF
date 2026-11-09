@@ -12,6 +12,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
 from config import cfg
+from MODULE.ClinicalEnsemble import ensemble_ckpt_path
 from MODULE.DSModule import TemporalAccumulator, pignistic_probability
 from MODULE.FusionModule import DSSNMMF
 from MODULE.LossModule import DSSNNLoss
@@ -22,19 +23,31 @@ log = logging.getLogger("DS-SNN")
 _LOSS_TERMS = ('ce', 'aux', 'ds', 'conflict', 'ign')
 
 
+def _trainable(params) -> list:
+    return [p for p in params if p.requires_grad]
+
+
 def build_param_groups(model: DSSNMMF) -> List[dict]:
     """Clinical branch + aux head train at CLINICAL_LR, imaging encoders at LEARNING_RATE.
-    Models without both a clinical branch and an imaging branch use one group."""
+    Models without both a clinical branch and an imaging branch use one group.
+    Empty groups are dropped (frozen clinical ensemble has no neural parameters)."""
     imaging = model.use_mri or model.use_pet or model.use_ct
-    if not (imaging and model.use_clinical):
-        lr = cfg.CLINICAL_LR if model.use_clinical else cfg.LEARNING_RATE
-        return [{'params': list(model.parameters()), 'lr': lr}]
-    hot = (list(model.clinical_encoder.parameters()) + list(model.ds_clinical.parameters())
-           + list(model.aux_head.parameters()))
+    all_params = _trainable(model.parameters())
+    if not all_params:
+        return []
+    if not (imaging and model.use_clinical) or getattr(model, 'uses_ensemble', False):
+        lr = cfg.LEARNING_RATE if imaging else cfg.CLINICAL_LR
+        return [{'params': all_params, 'lr': lr}]
+    hot_mods = [getattr(model, name, None) for name in ('clinical_encoder', 'ds_clinical', 'aux_head')]
+    hot = _trainable(p for mod in hot_mods if mod is not None for p in mod.parameters())
     hot_ids = {id(p) for p in hot}
-    cold = [p for p in model.parameters() if id(p) not in hot_ids]
-    groups = [{'params': hot, 'lr': cfg.CLINICAL_LR}]
-    return groups + [{'params': cold, 'lr': cfg.LEARNING_RATE}] if cold else groups
+    cold = [p for p in all_params if id(p) not in hot_ids]
+    groups = []
+    if hot:
+        groups.append({'params': hot, 'lr': cfg.CLINICAL_LR})
+    if cold:
+        groups.append({'params': cold, 'lr': cfg.LEARNING_RATE})
+    return groups or [{'params': all_params, 'lr': cfg.LEARNING_RATE}]
 
 
 def _model_kwargs(batch: dict, device: torch.device) -> dict:
@@ -48,15 +61,27 @@ class Trainer:
         self.model, self.device = model.to(device), device
         self.loss_fn = DSSNNLoss(class_weights.to(device) if class_weights is not None else None).to(device)
         groups = build_param_groups(model)
-        self.optimizer = AdamW(groups, weight_decay=cfg.WEIGHT_DECAY)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.NUM_EPOCHS, eta_min=cfg.MIN_LR)
+        self.trainable = bool(groups)
+        if self.trainable:
+            self.optimizer = AdamW(groups, weight_decay=cfg.WEIGHT_DECAY)
+            self.scheduler = CosineAnnealingLR(self.optimizer, T_max=cfg.NUM_EPOCHS, eta_min=cfg.MIN_LR)
+        else:
+            self.optimizer = self.scheduler = None
         self.best_val_f1 = self.best_val_acc = 0.0
         self.best_score = -1.0
         self.eval_model = self.model
-        log.info(f"  AdamW LRs: {[round(g['lr'], 6) for g in groups]}")
+        log.info(f"  AdamW LRs: {[round(g['lr'], 6) for g in groups]}" if groups else "  No neural parameters (frozen clinical ensemble).")
+
+    def _save_checkpoint(self, path: str) -> None:
+        torch.save(self.model.state_dict(), path)
+        if getattr(self.model, 'uses_ensemble', False):
+            self.model.clinical_encoder.save(ensemble_ckpt_path(path))
 
     def load_checkpoint(self, path: str) -> None:
         self.model.load_state_dict(torch.load(path, map_location=self.device))
+        extra = ensemble_ckpt_path(path)
+        if getattr(self.model, 'uses_ensemble', False) and extra.exists():
+            self.model.clinical_encoder.load(extra)
 
     # ── training ──────────────────────────────────────────────
     def _optimizer_step(self) -> None:
@@ -149,6 +174,14 @@ class Trainer:
 
     def fit(self, train_loader: DataLoader, val_loader: DataLoader, save_path: str = "ds_snn_mf_best.pt",
             verbose_every: int = 5) -> List[Dict]:
+        if not self.trainable:
+            log.info("No neural parameters — evaluating the frozen clinical ensemble and writing a checkpoint.")
+            val = self.evaluate(val_loader, verbose=True)
+            self.best_score = self._score(val['macro_f1'], val)
+            self.best_val_f1, self.best_val_acc = val['macro_f1'], val['acc']
+            self._save_checkpoint(save_path)
+            return []
+
         history: List[Dict] = []
         warmup, stale = cfg.CHECKPOINT_WARMUP, 0
         log.info(f"Training on {self.device} | {cfg.NUM_EPOCHS} epochs (checkpoint warmup={warmup}, "
@@ -165,7 +198,7 @@ class Trainer:
                 reason = self._reject_reason(train['f1'], val)
                 if reason is None and score > self.best_score + 1e-4:
                     self.best_score, self.best_val_f1, self.best_val_acc = score, val['macro_f1'], val['acc']
-                    torch.save(self.model.state_dict(), save_path)
+                    self._save_checkpoint(save_path)
                     stale = 0
                     log.info(f"  ✓ New best (score={score:.4f}, val_acc={val['acc']:.4f}, "
                              f"macro_f1={val['macro_f1']:.4f}, bal_acc={val['bal_acc']:.4f})")
@@ -188,7 +221,7 @@ class Trainer:
                 break
 
         if self.best_score < 0:  # no epoch passed the checkpoint rules
-            torch.save(self.model.state_dict(), save_path)
+            self._save_checkpoint(save_path)
             log.warning("No checkpoint saved during selection — wrote final weights.")
         return history
 

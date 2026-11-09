@@ -1,12 +1,13 @@
-"""DS-SNN-MF: spiking MRI/PET/CT encoders and a clinical MLP, fused with Dempster-Shafer theory.
+"""DS-SNN-MF: spiking MRI/PET/CT encoders and a clinical source, fused with Dempster-Shafer theory.
 
     MRI (MTL crop) ─ SNN ─ evidential head ─┐
     PET (whole)    ─ SNN ─ evidential head ─┤ gated sequential combine ─ fused BBA ─ BetP ─┐
     CT  (whole)    ─ SNN ─ evidential head ─┤                                              ├─ decision
-    clinical       ─ MLP ─ evidential head ─┘           clinical-only aux (softmax) ── K-aware blend ─┘
+    clinical       ─ MLP or tabular ensemble ─┘     clinical aux (softmax / log-proba) ── K-aware blend ─┘
 
 Missing PET/CT skip that encoder and contribute a vacuous BBA (Dempster identity).
 ``cfg.ABLATION`` is ``full`` or a plus-separated subset of ``mri``, ``pet``, ``ct``, ``clinical``.
+``cfg.CLINICAL_MODEL`` is ``mlp`` or ``ensemble``.
 """
 from typing import Dict, List, Optional, Tuple
 
@@ -16,9 +17,11 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from config import cfg
+from MODULE.ClinicalEnsemble import ClinicalEnsemble, proba_to_bba
+from MODULE.ClinicalMLP import ClinicalMLP
 from MODULE.DSModule import (ConflictDetectionModule, DSEvidenceLayer, compute_belief_plausibility,
                       conflict_breakdown, discount_bba, pignistic_probability, vacuous_bba)
-from MODULE.SNNModule import ClinicalMLP, SNN3DEncoder
+from MODULE.SNNModule import SNN3DEncoder
 
 
 def extract_view(mri: Tensor, box: Tuple[float, ...], out_shape: Tuple[int, int, int]) -> Tensor:
@@ -52,8 +55,10 @@ class DSSNMMF(nn.Module):
         self.use_pet = 'pet' in self.sources
         self.use_ct = 'ct' in self.sources
         self.use_clinical = 'clinical' in self.sources
+        self.uses_ensemble = cfg.clinical_is_ensemble()
         self.aux_clinical_only = cfg.AUX_CLINICAL_ONLY and self.use_clinical
         self.reliability = dict(cfg.BRANCH_RELIABILITY)
+        self.ds_clinical = None
 
         if self.use_mri:
             self._build_mri_branch(n_classes)
@@ -68,16 +73,22 @@ class DSSNMMF(nn.Module):
                                          evidence_cap=self._imaging_cap('ct'),
                                          evidence_scale=cfg.MRI_EVIDENCE_SCALE)
         if self.use_clinical:
-            self.clinical_encoder = ClinicalMLP(n_features=n_clinical)
-            cap = cfg.CLINICAL_EVIDENCE_CAP_STANDALONE if self.sources == {'clinical'} else cfg.EVIDENCE_CAP
-            self.ds_clinical = DSEvidenceLayer(cfg.CLINICAL_FEAT_DIM, n_classes, evidence_cap=cap)
+            if self.uses_ensemble:
+                self.clinical_encoder = ClinicalEnsemble(n_features=n_clinical, n_classes=n_classes)
+            else:
+                self.clinical_encoder = ClinicalMLP(n_features=n_clinical)
+                cap = cfg.CLINICAL_EVIDENCE_CAP_STANDALONE if self.sources == {'clinical'} else cfg.EVIDENCE_CAP
+                self.ds_clinical = DSEvidenceLayer(cfg.CLINICAL_FEAT_DIM, n_classes, evidence_cap=cap)
 
-        if self.aux_clinical_only:
-            aux_in = cfg.CLINICAL_FEAT_DIM
+        if self.uses_ensemble:
+            self.aux_head = None
         else:
-            n_img = (len(self.view_names) if self.use_mri else 0) + int(self.use_pet) + int(self.use_ct)
-            aux_in = n_img * cfg.VIEW_FEAT_DIM + (cfg.CLINICAL_FEAT_DIM if self.use_clinical else 0)
-        self.aux_head = nn.Sequential(nn.Dropout(cfg.ENCODER_DROPOUT), nn.Linear(aux_in, n_classes))
+            if self.aux_clinical_only:
+                aux_in = cfg.CLINICAL_FEAT_DIM
+            else:
+                n_img = (len(self.view_names) if self.use_mri else 0) + int(self.use_pet) + int(self.use_ct)
+                aux_in = n_img * cfg.VIEW_FEAT_DIM + (cfg.CLINICAL_FEAT_DIM if self.use_clinical else 0)
+            self.aux_head = nn.Sequential(nn.Dropout(cfg.ENCODER_DROPOUT), nn.Linear(aux_in, n_classes))
         self.cdm = ConflictDetectionModule()
 
         self.pure_decision = self.ablation != 'full' and cfg.ABLATION_PURE_DECISION
@@ -188,9 +199,15 @@ class DSSNMMF(nn.Module):
         if self.use_clinical:
             assert clinical is not None and clinical.numel() > 0, "Clinical features required."
             batch, device = clinical.shape[0], clinical.device
-            feat = self.clinical_encoder(clinical)
-            clin_feats.append(feat)
-            named.append(('clinical', self.ds_clinical(feat)))
+            if self.uses_ensemble:
+                proba = self.clinical_encoder(clinical)
+                clin_feats.append(proba)
+                cap = cfg.CLINICAL_EVIDENCE_CAP_STANDALONE if self.sources == {'clinical'} else cfg.EVIDENCE_CAP
+                named.append(('clinical', proba_to_bba(proba, cap=cap)))
+            else:
+                feat = self.clinical_encoder(clinical)
+                clin_feats.append(feat)
+                named.append(('clinical', self.ds_clinical(feat)))
         assert named, "No evidence sources active — check cfg.ABLATION / USE_CLINICAL."
 
         n_present = torch.zeros(batch, device=device)
@@ -222,10 +239,19 @@ class DSSNMMF(nn.Module):
         bel, pl = compute_belief_plausibility(m)
         betp = pignistic_probability(m)
 
-        aux_feats = clin_feats if self.aux_clinical_only else mri_feats + pet_feats + ct_feats + clin_feats
-        aux_logits = self.aux_head(torch.cat(aux_feats, dim=1))
-        blend = self._blend(kmax)
-        decision = (1.0 - blend) * betp + blend * F.softmax(aux_logits, dim=1)
+        if self.uses_ensemble:
+            aux_logits = torch.log(clin_feats[0].clamp(min=1e-8))
+            if self.sources == {'clinical'}:
+                blend = torch.zeros_like(kmax).unsqueeze(1)
+                decision = clin_feats[0]
+            else:
+                blend = self._blend(kmax)
+                decision = (1.0 - blend) * betp + blend * F.softmax(aux_logits, dim=1)
+        else:
+            aux_feats = clin_feats if self.aux_clinical_only else mri_feats + pet_feats + ct_feats + clin_feats
+            aux_logits = self.aux_head(torch.cat(aux_feats, dim=1))
+            blend = self._blend(kmax)
+            decision = (1.0 - blend) * betp + blend * F.softmax(aux_logits, dim=1)
 
         return {
             'm_fused': m, 'bel': bel, 'pl': pl, 'betp': betp,

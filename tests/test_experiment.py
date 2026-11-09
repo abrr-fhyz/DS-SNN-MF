@@ -56,7 +56,8 @@ def synthetic(tmp_path, monkeypatch):
     for key, value in dict(DATASET='oasis3', MRI_SHAPE=SHAPE, VIEW_SHAPE=SHAPE, NUM_EPOCHS=2, MIN_EPOCHS=1,
                            CHECKPOINT_WARMUP=1, PATIENCE=1, N_FOLDS=2, REPEATS=1, USE_CV=True, BATCH_SIZE=4,
                            GRAD_ACCUM_STEPS=1, NUM_WORKERS=0, BOOTSTRAP_ROUNDS=20, CKPT_MAX_VAL_TRAIN_GAP=1.0,
-                           OUT_DIR=tmp_path / 'runs', ABLATION='full').items():
+                           OUT_DIR=tmp_path / 'runs', ABLATION='full',
+                           CLINICAL_ENSEMBLE_MEMBERS=('rf', 'extratrees', 'svm')).items():
         monkeypatch.setattr(cfg, key, value)
     return tmp_path
 
@@ -80,6 +81,7 @@ def test_parse_ablation_full_and_subsets():
 
 def test_missing_pet_ct_use_vacuous_mass(synthetic, monkeypatch):
     monkeypatch.setattr(cfg, 'ABLATION', 'full')
+    monkeypatch.setattr(cfg, 'CLINICAL_MODEL', 'mlp')
     model = DSSNMMF()
     model.eval()
     B = 2

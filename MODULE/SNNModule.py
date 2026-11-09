@@ -197,21 +197,3 @@ class SNN3DEncoder(nn.Module):
         f = (feats * w).sum(dim=0)
         f = self.feat_bn(f)
         return self.proj(self.dropout(f))
-
-# ──────────────────────────────────────────────────────────────
-# Clinical tabular encoder
-# ──────────────────────────────────────────────────────────────
-class ClinicalMLP(nn.Module):
-    """MLP encoder for the clinical/demographic features."""
-    def __init__(self, n_features: int, out_dim: int = cfg.CLINICAL_FEAT_DIM, dropout: float = cfg.ENCODER_DROPOUT):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(n_features, 64),
-            nn.LayerNorm(64), nn.ReLU(), nn.Dropout(dropout),
-            nn.Linear(64, 64),
-            nn.LayerNorm(64), nn.ReLU(), nn.Dropout(dropout),
-            nn.Linear(64, out_dim),
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self.net(x)

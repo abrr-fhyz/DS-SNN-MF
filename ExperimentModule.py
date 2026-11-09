@@ -78,10 +78,25 @@ def build_loaders(data: Dict[str, Sequences]):
     return (*loaders, weights, counts)
 
 
+def _clinical_xy(sequences: Sequences, visits: str) -> Tuple[np.ndarray, np.ndarray]:
+    """Scaled clinical rows and labels for the train fold (``visits`` is ``last`` or ``all``)."""
+    rows, labels = [], []
+    for seq in sequences:
+        chosen = seq if visits == 'all' else [seq[-1]]
+        for visit in chosen:
+            rows.append(np.asarray(visit['clinical'], dtype=np.float64))
+            labels.append(int(visit['label']))
+    return np.stack(rows), np.asarray(labels, dtype=np.int64)
+
+
 def run_split(data: Dict[str, Sequences], device: torch.device, ckpt_path: str) -> Tuple[dict, Predictions]:
     """Train on ``data['train']``, select on val, evaluate once on test."""
     train_loader, val_loader, test_loader, long_loader, weights, counts = build_loaders(data)
-    trainer = Trainer(DSSNMMF().to(device), device=device, class_weights=weights)
+    model = DSSNMMF()
+    if model.uses_ensemble:
+        X, y = _clinical_xy(data['train'], cfg.spec.train_visits)
+        model.clinical_encoder.fit(X, y)
+    trainer = Trainer(model.to(device), device=device, class_weights=weights)
     trainer.fit(train_loader, val_loader, save_path=ckpt_path)
     trainer.load_checkpoint(ckpt_path)
 
