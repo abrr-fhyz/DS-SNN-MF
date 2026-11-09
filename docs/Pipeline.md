@@ -57,7 +57,7 @@ Evidence caps: MRI/PET/CT scale 0.7, cap 9 in the full model and 18 standalone. 
 Training reads `data/oasis3/processed_v5/<session>/tensor_96x96x96.pt` for MRI, PET and CT session ids.
 
 ```bash
-python -m OtherModules.mri_preprocess --limit 5 --force
+python -m OtherModules.mri_preprocess --modality mri --limit 1 --chunk 1 --workers 1 --force
 python main.py --folds 2 --single-split
 python main.py --ablation mri+pet+clinical
 ```

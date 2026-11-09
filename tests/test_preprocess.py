@@ -1,7 +1,14 @@
 """Preprocessing helpers that do not need SimpleITK / HD-BET."""
+import inspect
+
 import numpy as np
 
 from OtherModules import mri_preprocess as pre
+
+
+def test_preprocess_defaults_to_one_session_hd_bet_chunks():
+    assert inspect.signature(pre.run_preprocess).parameters['chunk'].default == 1
+    assert inspect.signature(pre.run_preprocess).parameters['workers'].default == 1
 
 
 def test_collapse_dynamic_means_last_third_of_frames():

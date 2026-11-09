@@ -21,8 +21,8 @@ Output per session ``<MRI_PROCESSED_DIR>/<session_id>/``:
 
 Usage (from the project root)::
 
-    python -m OtherModules.mri_preprocess --chunk 16 --workers 4
-    python -m OtherModules.mri_preprocess --limit 5 --force        # smoke test
+    python -m OtherModules.mri_preprocess --modality mri --limit 1 --chunk 1 --workers 1 --force
+    python -m OtherModules.mri_preprocess --chunk 1 --workers 1
     python -m OtherModules.mri_preprocess --modality pet
 
 Requires nibabel, SimpleITK, templateflow. MRI also needs the ``hd-bet`` CLI on PATH.
@@ -159,21 +159,39 @@ def _template(template_path: str, target_shape: Tuple[int, int, int]):
 # Skull stripping (batched HD-BET)
 # ──────────────────────────────────────────────────────────────
 
-def _run_hd_bet(in_dir: Path, out_dir: Path) -> None:
+def _hd_bet_device() -> str:
+    device = HD_BET_DEVICE.strip().lower()
+    return f'cuda:{device}' if device.isdigit() else device
+
+
+def _stream_command(cmd: List[str]) -> Tuple[int, str]:
+    """Run ``cmd``, print stdout/stderr live, and return ``(returncode, combined output)``."""
+    print(' ', ' '.join(cmd), flush=True)
+    env = os.environ.copy()
+    env['PYTHONUNBUFFERED'] = '1'
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    chunks: List[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(line, end='', flush=True)
+        chunks.append(line)
+    return proc.wait(), ''.join(chunks)
+
+
+def _run_hd_bet(src: Path, dst: Path) -> None:
+    """Call HD-BET on a file or a folder. TTA is off so an 8 GB GPU can finish."""
     if shutil.which('hd-bet') is None:
         raise RuntimeError("hd-bet not found on PATH")
-    device = HD_BET_DEVICE.strip().lower()
-    device = f'cuda:{device}' if device.isdigit() else device
-    base = ['hd-bet', '-i', str(in_dir), '-o', str(out_dir), '-device', device]
+    base = ['hd-bet', '-i', str(src), '-o', str(dst), '-device', _hd_bet_device()]
     last_err = ''
-    for cmd in (base + ['--save_bet_mask'], base):          # HD-BET v2, then v1
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+    # v2 first (--save_bet_mask, --disable_tta), then drop unknown flags, then v1.
+    for extra in (['--save_bet_mask', '--disable_tta'], ['--save_bet_mask'], ['--disable_tta'], []):
+        code, output = _stream_command(base + extra)
+        if code == 0:
             return
-        except subprocess.CalledProcessError as exc:
-            last_err = (exc.stderr or '') + (exc.stdout or '') or str(exc)
-            if not any(flag in last_err.lower() for flag in _HD_BET_UNKNOWN_FLAG):
-                break
+        last_err = output.strip() or f'exit {code}'
+        if not any(flag in last_err.lower() for flag in _HD_BET_UNKNOWN_FLAG):
+            break
     raise RuntimeError(f"hd-bet call failed: {last_err}")
 
 
@@ -186,25 +204,40 @@ def _locate(out_dir: Path, mid: str) -> Tuple[Optional[Path], Optional[Path]]:
 
 def skull_strip_batch(sessions: List[Tuple[str, Path]], workdir: Path
                       ) -> Dict[str, Tuple[Optional[Path], Optional[Path], Optional[str]]]:
-    """Skull-strip every session with one HD-BET call. Returns {mri_id: (brain, mask, error)}."""
+    """Skull-strip every session. One session uses HD-BET's file path; several share a folder call.
+
+    Returns ``{mri_id: (brain, mask, error)}``. An HD-BET crash is recorded on the batch and
+    does not abort the rest of preprocess.
+    """
     sitk = _sitk()
     in_dir, out_dir = workdir / 'in', workdir / 'out'
     in_dir.mkdir(), out_dir.mkdir()
     results: Dict[str, Tuple[Optional[Path], Optional[Path], Optional[str]]] = {}
-    staged = []
+    staged: List[str] = []
     for mid, raw in sessions:
         try:
-            sitk.WriteImage(_read(raw), str(in_dir / f'{mid}.nii.gz'))
+            sitk.WriteImage(_ensure_3d(_read(raw)), str(in_dir / f'{mid}.nii.gz'))
             staged.append(mid)
         except Exception as exc:  # noqa: BLE001
             results[mid] = (None, None, f"cannot read {raw}: {exc}")
+    batch_err: Optional[str] = None
     if staged:
-        _run_hd_bet(in_dir, out_dir)
+        try:
+            if len(staged) == 1:
+                mid = staged[0]
+                _run_hd_bet(in_dir / f'{mid}.nii.gz', out_dir / f'{mid}.nii.gz')
+            else:
+                _run_hd_bet(in_dir, out_dir)
+        except Exception as exc:  # noqa: BLE001
+            batch_err = str(exc)
+    listing = sorted(p.name for p in out_dir.iterdir())[:8] if out_dir.exists() else []
     for mid in staged:
         brain, mask = _locate(out_dir, mid)
-        error = None if brain and mask else \
-            f"hd-bet produced no brain/mask for {mid}; out dir has {sorted(p.name for p in out_dir.iterdir())[:8]}"
-        results[mid] = (brain, mask, error)
+        if brain and mask:
+            results[mid] = (brain, mask, None)
+        else:
+            results[mid] = (None, None, batch_err or
+                            f"hd-bet produced no brain/mask for {mid}; out dir has {listing}")
     return results
 
 
@@ -438,12 +471,19 @@ def _run_mri_preprocess(out_dir: Path, use_gm: Optional[bool], force: bool, offs
             batch = pending[start:start + chunk]
             print(f"[{offset + start + 1}-{offset + start + len(batch)}/{len(sessions)}] skull-stripping {len(batch)} session(s)")
             with tempfile.TemporaryDirectory() as td:
-                stripped = skull_strip_batch(batch, Path(td))
+                try:
+                    stripped = skull_strip_batch(batch, Path(td))
+                except Exception as exc:  # noqa: BLE001
+                    for mid, raw in batch:
+                        failures.append({'mri_id': mid, 'raw': str(raw), 'error': str(exc)})
+                        print(f"  {mid}: fail ({exc})")
+                    continue
                 jobs = []
                 for mid, raw in batch:
                     brain, mask, error = stripped[mid]
                     if error:
                         failures.append({'mri_id': mid, 'raw': str(raw), 'error': error})
+                        print(f"  {mid}: fail ({error})")
                         continue
                     jobs.append({'mri_id': mid, 'raw': str(raw), 'brain': str(brain), 'mask': str(mask),
                                  'out_dir': str(out_dir / mid), 'tensor_path': str(tensor_path(mid)),
@@ -513,7 +553,7 @@ def run_plain_preprocess(kind: str, out_dir: Path, force: bool = False, offset: 
 
 
 def run_preprocess(out_dir: Optional[Path] = None, use_gm: Optional[bool] = None, force: bool = False,
-                   offset: int = 0, limit: Optional[int] = None, chunk: int = 16, workers: int = 1,
+                   offset: int = 0, limit: Optional[int] = None, chunk: int = 1, workers: int = 1,
                    modality: str = 'all') -> None:
     modality = str(modality or 'all').lower()
     if modality not in ('all', 'mri', 'pet', 'ct'):
@@ -534,7 +574,7 @@ def main() -> None:
     ap.add_argument('--force', action='store_true', help='reprocess even if the tensor exists')
     ap.add_argument('--offset', type=int, default=0, help='start index into the session list')
     ap.add_argument('--limit', type=int, default=None, help='number of sessions from --offset')
-    ap.add_argument('--chunk', type=int, default=16, help='sessions per HD-BET call (MRI)')
+    ap.add_argument('--chunk', type=int, default=1, help='sessions per HD-BET call (MRI); keep 1 on 8 GB GPUs')
     ap.add_argument('--workers', type=int, default=1, help='processes for N4 + registration')
     ap.add_argument('--no-gm', action='store_true', help='skip the GM channel')
     ap.add_argument('--modality', choices=['all', 'mri', 'pet', 'ct'], default='all')

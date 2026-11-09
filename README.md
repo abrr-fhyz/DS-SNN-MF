@@ -30,11 +30,12 @@ Multi-view structural MRI, PET, CT and clinical features are fused with Dempster
 Install: Python 3.10+, `torch`, `numpy`, `pandas`, `scikit-learn`, `nibabel`, `openpyxl`, `pytest`. Preprocessing additionally needs `SimpleITK`, `templateflow` and the `hd-bet` CLI.
 
 1. Place data under `data/oasis3/` (layout in `docs/OASIS3.md`).
-2. Preprocess the MRI once. Training reads the processed tensors and fails if they are missing.
+2. Preprocess MRI once (then PET/CT). Training reads the processed tensors and fails if they are missing.
    ```bash
-   python -m OtherModules.mri_preprocess
+   python -m OtherModules.mri_preprocess --modality mri --limit 1 --chunk 1 --workers 1 --force
+   python -m OtherModules.mri_preprocess --chunk 1 --workers 1
    ```
-   It skips finished sessions, so interrupted runs can be restarted; `--offset` / `--limit` select a slice.
+   Keep `--chunk 1` on 8 GB GPUs (HD-BET v2 otherwise spawns four nnU-Net workers and dies). Interrupted runs skip finished sessions; `--offset` / `--limit` select a slice.
 3. Run the experiment.
    ```bash
    python main.py

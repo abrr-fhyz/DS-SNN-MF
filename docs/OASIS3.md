@@ -51,12 +51,12 @@ Matching is case-insensitive and ignores spaces and punctuation.
 ## Steps
 
 ```bash
-python -m OtherModules.mri_preprocess --limit 5 --force   # smoke test (MRI then PET then CT)
-python -m OtherModules.mri_preprocess --chunk 16 --workers 4
+python -m OtherModules.mri_preprocess --modality mri --limit 1 --chunk 1 --workers 1 --force
+python -m OtherModules.mri_preprocess --chunk 1 --workers 1
 python main.py --ablation full
 ```
 
-Check the smoke test outputs (`data/oasis3/processed_v5/<session>/t1.nii.gz`) visually before processing everything. HD-BET is invoked on whole chunks and expects output files named after the inputs; if your HD-BET version names them differently, `_locate` in `mri_preprocess.py` is the place to adjust.
+Check the smoke test output (`data/oasis3/processed_v5/<session>/t1.nii.gz`) visually before processing everything. Keep `--chunk 1` on an 8 GB GPU: HD-BET v2 hardcodes four nnU-Net preprocess workers, and a folder of several T1s is what raises “Background workers died”. HD-BET expects output files named after the inputs; if your version names them differently, `_locate` in `mri_preprocess.py` is the place to adjust.
 
 ## Training choices
 
