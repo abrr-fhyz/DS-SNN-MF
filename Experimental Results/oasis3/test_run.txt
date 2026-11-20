@@ -34,7 +34,6 @@ INFO | =========================================================================
 INFO | Report test metrics only; validation numbers are for early stopping. Tune hyperparameters on validation, never on these test folds.
 INFO |
 
-
 ============================================================================
 SUBJECT-LEVEL CV SUMMARY — 5 fold(s)  (mean ± std)
 ============================================================================

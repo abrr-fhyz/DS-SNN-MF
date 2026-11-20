@@ -91,6 +91,8 @@ From the fused BBA: **Bel**, **Pl**, **BetP** (pignistic).
 \(\mathrm{decision}=(1-\texttt{DECISION\_BLEND})\cdot\mathrm{BetP}+\texttt{DECISION\_BLEND}\cdot p_{\mathrm{aux}}\),  
 with aux = clinical features only when `AUX_CLINICAL_ONLY=True`.
 
+Imaging ablations that do not include clinical are not pure BetP. They train a linear head on the spiking features and take its softmax as the decision. See `docs/Pipeline.md`.
+
 **Across visits (eval).** `TemporalAccumulator` starts from vacuous \(m(\Theta)=1\) and sequentially Dempster-combines (Yager) per-visit fused BBAs; reported alongside last-visit accuracy. Primary paper numbers remain cross-sectional last-visit test metrics.
 
 ---

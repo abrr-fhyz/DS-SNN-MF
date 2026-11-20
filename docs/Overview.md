@@ -10,7 +10,7 @@ Labels come from the Clinical Dementia Rating at each visit: 0 gives CN, 0.5 giv
    - MRI views are cropped from the registered T1 volume, passed through a shared 3D spiking encoder (PLIF neurons, SEW-ADD residual blocks, T=8 timesteps) and mapped by an evidential head to a BBA. Evidence is `softplus`; `m({c}) = e_c / S`, `m(Θ) = |Θ| / S`.
    - Clinical features pass through an MLP and an evidential head to a second BBA.
 2. **Fusion.** MRI views are folded together first, then fused with the clinical BBA. Dempster's rule is blended with a high-conflict rule by a gate `sigmoid(γ(K − κ))`, where K is the conflict mass. The high-conflict rule is `yager`, `ordinal` or `pcr5` (`cfg.CONFLICT_RULE`). Sources are discounted by branch reliability beforehand.
-3. **Decision.** Pignistic probability of the fused BBA. As K rises, the decision is blended towards an auxiliary clinical-only head (`DECISION_BLEND_MAX`).
+3. **Decision.** When clinical is one of the sources, the decision is the pignistic probability of the fused BBA, blended toward an auxiliary clinical head as K rises (`DECISION_BLEND_MAX`). An imaging ablation with no clinical source decides by the softmax of a linear head on the encoder features.
 4. **Longitudinal accumulation.** `TemporalAccumulator` can fold per-visit BBAs over time; evaluation uses each subject's last visit.
 
 ## Evaluation protocol
@@ -22,7 +22,7 @@ Labels come from the Clinical Dementia Rating at each visit: 0 gives CN, 0.5 giv
 - Reported: accuracy, macro-F1, per-class F1, balanced accuracy, AUROC, Brier, ECE; selective accuracy at `SELECTIVE_COVERAGE` when ranking by `Pl − Bel` versus max probability; mean K, gate and uncertainty.
 - Out-of-fold predictions are pooled and bootstrapped over subjects (`BOOTSTRAP_ROUNDS`) to give CIs for differences between models.
 
-`TRAIN_VISITS` selects the training samples: `last` uses one per subject, `all` uses every visit with its own label. OASIS-2 defaults to `last`, OASIS-3 to `all`.
+`TRAIN_VISITS` selects the training samples: `last` uses one per subject, `all` uses every visit with its own label. OASIS-2 and OASIS-3 both default to `last`.
 
 ## Results so far (OASIS-2)
 

@@ -63,12 +63,12 @@ class DSSNMMF(nn.Module):
         if self.use_mri:
             self._build_mri_branch(n_classes)
         if self.use_pet:
-            self.pet_encoder = SNN3DEncoder(in_ch=1, out_dim=cfg.VIEW_FEAT_DIM)
+            self.pet_encoder = SNN3DEncoder(in_ch=1, out_dim=cfg.VIEW_FEAT_DIM, dropout=cfg.ENCODER_DROPOUT)
             self.ds_pet = DSEvidenceLayer(cfg.VIEW_FEAT_DIM, n_classes,
                                           evidence_cap=self._imaging_cap('pet'),
                                           evidence_scale=cfg.MRI_EVIDENCE_SCALE)
         if self.use_ct:
-            self.ct_encoder = SNN3DEncoder(in_ch=1, out_dim=cfg.VIEW_FEAT_DIM)
+            self.ct_encoder = SNN3DEncoder(in_ch=1, out_dim=cfg.VIEW_FEAT_DIM, dropout=cfg.ENCODER_DROPOUT)
             self.ds_ct = DSEvidenceLayer(cfg.VIEW_FEAT_DIM, n_classes,
                                          evidence_cap=self._imaging_cap('ct'),
                                          evidence_scale=cfg.MRI_EVIDENCE_SCALE)
@@ -101,11 +101,12 @@ class DSSNMMF(nn.Module):
     def _build_mri_branch(self, n_classes: int) -> None:
         in_ch = cfg.mri_in_channels()
         if cfg.SHARE_MRI_ENCODER:
-            self.shared_encoder = SNN3DEncoder(in_ch=in_ch, out_dim=cfg.VIEW_FEAT_DIM)
+            self.shared_encoder = SNN3DEncoder(in_ch=in_ch, out_dim=cfg.VIEW_FEAT_DIM, dropout=cfg.ENCODER_DROPOUT)
             self.encoders = None
         else:
             self.shared_encoder = None
-            self.encoders = nn.ModuleDict({n: SNN3DEncoder(in_ch=in_ch, out_dim=cfg.VIEW_FEAT_DIM)
+            self.encoders = nn.ModuleDict({n: SNN3DEncoder(in_ch=in_ch, out_dim=cfg.VIEW_FEAT_DIM,
+                                                          dropout=cfg.ENCODER_DROPOUT)
                                            for n in self.view_names})
         cap = self._imaging_cap('mri')
         self.ds_layers = nn.ModuleDict({
@@ -148,6 +149,18 @@ class DSSNMMF(nn.Module):
             return torch.zeros_like(K_max).unsqueeze(1)
         gate = torch.sigmoid(cfg.DECISION_BLEND_SHARPNESS * (K_max - cfg.DECISION_BLEND_KAPPA))
         return (self.blend_base + (self.blend_max - self.blend_base) * gate).clamp(0.0, 1.0).unsqueeze(1)
+
+    def _train_mask(self, batch: int, device: torch.device,
+                    has_pet: Optional[Tensor], has_ct: Optional[Tensor]) -> Tensor:
+        """Rows the loss should see. Imaging-only PET/CT skips visits with no scan."""
+        if self.use_clinical or self.use_mri:
+            return torch.ones(batch, dtype=torch.bool, device=device)
+        mask = torch.zeros(batch, dtype=torch.bool, device=device)
+        if self.use_pet:
+            mask = mask | _as_mask(has_pet, batch, device)
+        if self.use_ct:
+            mask = mask | _as_mask(has_ct, batch, device)
+        return mask
 
     def _masked_bba(self, volume: Tensor, encoder: nn.Module, ds_layer: nn.Module,
                     present: Optional[Tensor]) -> Tuple[Tensor, Tensor]:
@@ -250,8 +263,15 @@ class DSSNMMF(nn.Module):
         else:
             aux_feats = clin_feats if self.aux_clinical_only else mri_feats + pet_feats + ct_feats + clin_feats
             aux_logits = self.aux_head(torch.cat(aux_feats, dim=1))
-            blend = self._blend(kmax)
-            decision = (1.0 - blend) * betp + blend * F.softmax(aux_logits, dim=1)
+            if not self.use_clinical:
+                decision = F.softmax(aux_logits, dim=1)
+                blend = torch.zeros_like(kmax).unsqueeze(1)
+                m = proba_to_bba(decision, cap=cfg.MRI_EVIDENCE_CAP_STANDALONE)
+                bel, pl = compute_belief_plausibility(m)
+                betp = pignistic_probability(m)
+            else:
+                blend = self._blend(kmax)
+                decision = (1.0 - blend) * betp + blend * F.softmax(aux_logits, dim=1)
 
         return {
             'm_fused': m, 'bel': bel, 'pl': pl, 'betp': betp,
@@ -260,4 +280,5 @@ class DSSNMMF(nn.Module):
             'K': kmax, 'K_sum': ksum, 'K_breakdown': breakdown,
             'conflict_flag': flag, 'conflict_gate': gate,
             'decision_blend': blend.squeeze(1), 'aux_logits': aux_logits,
+            'train_mask': self._train_mask(batch, device, has_pet, has_ct),
         }

@@ -104,3 +104,11 @@ Goal: clinical must not monopolize high-K decisions; fused BetP (MRI × clinical
 
 High-K `decision` is at most 50% clinical aux / at least 50% fused BetP. MRI Shafer reliability restored so the BBA itself is not a spectator. `DECISION_BLEND_KAPPA` stays 0.20. Re-run `python main.py` with `ABLATION='full'`.
 
+## Imaging ablations were uniform
+
+MRI, PET, and CT alone (`Experimental Results/oasis3/ablation_runs.txt`) sat on a uniform draw: balanced accuracy 0.333, Brier about 0.67, CN F1 0, and selected validation accuracy 0 because every checkpoint was rejected.
+
+Cause: `ABLATION_PURE_DECISION` made those runs decide by BetP. With one source, conflict is 0 and the evidence head stays near-vacuous, so class weights tip the argmax off CN. The full-model schedule (encoder frozen for 5 epochs, LR 5e-5, dropout 0.40) also left the encoder almost untrained. PET and CT still backpropagated through visits that had no scan.
+
+Imaging-only runs now decide by the softmax of a linear head on the encoder features. The belief assignment is `proba_to_bba` of that softmax. PET-only and CT-only losses skip missing scans. The encoder trains from epoch 1 at 3e-4, dropout 0.10, focal gamma 1, and without loss class weights. The freeze and the 5e-5 learning rate stay in place only when clinical is also in the model. If the checkpoint gate rejects every epoch, the best validation macro-F1 weights are kept. The full model and the clinical ensemble are unchanged.
+

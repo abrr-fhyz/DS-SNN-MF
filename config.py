@@ -63,7 +63,7 @@ class Config:
     # CDR/MMSE are excluded from inputs (they define the label). Sex is a demographic;
     # eTIV/nWBV are imaging-derived volumes, not the diagnosis. 'APOE4' (allele count) can be added.
     DATASETS: Dict[str, dict] = {
-        'oasis3': dict(root=OASIS3_DIR, max_visits=8, train_visits='all',
+        'oasis3': dict(root=OASIS3_DIR, max_visits=8, train_visits='last',
                        clinical_cols=('Age', 'EDUC', 'MF', 'eTIV', 'nWBV')),
     }
     TRAIN_VISITS = None        # None → dataset default; 'last' | 'all'
@@ -95,20 +95,21 @@ class Config:
 
     # ── Ablation ──────────────────────────────────────────────────────────
     # 'full' (MRI + PET + CT + clinical) or a plus-separated subset, e.g. 'clinical', 'mri+pet'
-    ABLATION = 'clinical'      # 'clinical' needs no processed volumes; switch to 'full' after preprocess
+    ABLATION = 'full'      # 'clinical' needs no processed volumes; switch to 'full' after preprocess
     ABLATION_PURE_DECISION = True  # ablations: prediction = BetP only
 
     # ── Spiking neural network ────────────────────────────────────────────
-    T_STEPS          = 8
+    T_STEPS          = 4
     LIF_TAU          = 2.0
     LIF_THRESHOLD    = 1.0
     SURROGATE_ALPHA  = 4.0
     SNN_INPUT_CODING = 'direct'
     ENCODER_CHANNELS = (16, 32, 64)
-    ENCODER_DROPOUT  = 0.10
+    ENCODER_DROPOUT  = 0.40
     VIEW_FEAT_DIM    = 64
     SHARE_MRI_ENCODER = True
     SNN_BLOCKS_PER_STAGE = 1
+    FREEZE_ENCODER_EPOCHS = 5   # train DS heads only, then unfreeze SNNs
 
     # ── MRI views ─────────────────────────────────────────────────────────
     VIEW_SHAPE = (64, 64, 64)
@@ -133,20 +134,20 @@ class Config:
     MRI_EVIDENCE_CAP = 9.0
     MRI_EVIDENCE_CAP_STANDALONE = 18.0
     CLINICAL_EVIDENCE_CAP_STANDALONE = 18.0
-    MRI_EVIDENCE_SCALE = 0.7
+    MRI_EVIDENCE_SCALE = 0.5
 
     # Soft gate uses CONFLICT_RULE when K > kappa. One of:
     #   'yager'   all conflict mass redirected onto Θ
     #   'ordinal' adjacent-class conflict → {CN,MCI}/{MCI,AD}; CN↔AD and compound → Θ
     #   'pcr5'    proportional conflict redistribution onto the conflicting pair
     CONFLICT_RULE  = 'pcr5'
-    CONFLICT_KAPPA = 0.25
+    CONFLICT_KAPPA = 0.20
     CONFLICT_REPORT_KAPPA = 0.20
     CONFLICT_GAMMA = 20.0
     AUX_CLINICAL_ONLY = True
     # Low K → fused BetP; high K → up to DECISION_BLEND_MAX of the clinical aux head.
-    DECISION_BLEND = 0.0
-    DECISION_BLEND_MAX = 0.50
+    DECISION_BLEND = 0.15
+    DECISION_BLEND_MAX = 0.40
     DECISION_BLEND_KAPPA = 0.20
     DECISION_BLEND_SHARPNESS = 20.0
     BRANCH_RELIABILITY = {'mtl': 0.90, 'pet': 0.90, 'ct': 0.80, 'clinical': 1.0}
@@ -154,33 +155,34 @@ class Config:
     # ── Loss ──────────────────────────────────────────────────────────────
     LAMBDA_AUX      = 0.8
     LAMBDA_AUX_STANDALONE = 0.8
-    LAMBDA_DS       = 0.15
-    LAMBDA_K        = 0.08
+    LAMBDA_DS       = 0.05
+    LAMBDA_K        = 0.30
     LAMBDA_IGN      = 0.05
     LAMBDA_IGN_STANDALONE = 0.0
-    LABEL_SMOOTHING = 0.02
-    FOCAL_GAMMA     = 1.0
-    MCI_LOSS_BOOST  = 1.0
-    USE_LOSS_CLASS_WEIGHTS = False
+    LABEL_SMOOTHING = 0.05
+    FOCAL_GAMMA     = 2.0
+    MCI_LOSS_BOOST  = 1.25
+    USE_LOSS_CLASS_WEIGHTS = True
 
     IGNORANCE_TARGET_CN  = 0.10
     IGNORANCE_TARGET_MCI = 0.15
     IGNORANCE_TARGET_AD  = 0.10
 
     # ── Training ──────────────────────────────────────────────────────────
-    BATCH_SIZE       = 4
-    GRAD_ACCUM_STEPS = 4
+    BATCH_SIZE       = 1
+    GRAD_ACCUM_STEPS = 16
     NUM_EPOCHS       = 40
-    LEARNING_RATE    = 7e-4           # MRI / SNN LR
-    WEIGHT_DECAY     = 1e-4
+    LEARNING_RATE    = 5e-5           # MRI / SNN LR when clinical is also trained
+    STANDALONE_IMAGING_LR = 3e-4     # MRI / PET / CT ablation, no clinical branch
+    WEIGHT_DECAY     = 1e-3
     MIN_LR           = 1e-6
 
-    CHECKPOINT_WARMUP = 10
-    MIN_EPOCHS        = 30
-    PATIENCE          = 10
+    CHECKPOINT_WARMUP = 3
+    MIN_EPOCHS        = 8
+    PATIENCE          = 6
     CKPT_REQUIRE_ALL_CLASSES = True
-    CKPT_MAX_VAL_TRAIN_GAP   = 0.15   # reject checkpoints with val_f1 − train_f1 above this
-    CKPT_TRAIN_F1_WEIGHT     = 0.10
+    CKPT_MAX_OVERFIT_GAP     = 0.35   # reject checkpoints with train_f1 − val_f1 above this
+    CKPT_TRAIN_F1_WEIGHT     = 0.0
 
     # ── Evaluation / output ───────────────────────────────────────────────
     BOOTSTRAP_ROUNDS = 1000

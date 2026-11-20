@@ -148,7 +148,7 @@ class SNN3DEncoder(nn.Module):
 
         # ---- Head ----
         self.pool    = nn.AdaptiveAvgPool3d(1)
-        self.feat_bn = nn.BatchNorm1d(prev)
+        self.feat_bn = nn.LayerNorm(prev)
         self.dropout = nn.Dropout(dropout)
         self.proj    = nn.Linear(prev, out_dim)
 

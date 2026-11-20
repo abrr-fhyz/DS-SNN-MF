@@ -1,0 +1,79 @@
+#### FULL RUN 01
+INFO | Device: cuda | dataset=oasis3 | ablation=full sources=['clinical', 'ct', 'mri', 'pet'] | train_visits=last | views=['mtl'] | clinical=['Age', 'EDUC', 'MF', 'eTIV', 'nWBV'] model=ensemble | kappa=0.2 rule=pcr5 | clin_lr=0.0001 mri_lr=5e-05 | blend_max=0.4
+INFO | Dataset oasis3: 123 subjects | final-label counts ['CN', 'MCI', 'AD'] = [62, 42, 19]
+
+============================================================================
+SUBJECT-LEVEL CV SUMMARY — 5 fold(s)  (mean ± std)
+============================================================================
+INFO |   Test accuracy                0.4887 ± 0.0865   ['0.400', '0.400', '0.560', '0.500', '0.583']
+INFO |   Test macro-F1                0.4304 ± 0.1014   ['0.396', '0.291', '0.512', '0.407', '0.545']
+INFO |   Test balanced accuracy       0.4525 ± 0.1061   ['0.426', '0.306', '0.522', '0.425', '0.583']
+INFO |   Test macro AUROC             0.6585 ± 0.0757   ['0.661', '0.549', '0.665', '0.656', '0.762']
+INFO |   Test Brier                   0.5952 ± 0.0386   ['0.606', '0.652', '0.588', '0.584', '0.546']
+INFO |   Test ECE                     0.1651 ± 0.0747   ['0.229', '0.098', '0.084', '0.163', '0.250']
+INFO |   Selective acc (Pl−Bel)       0.5000 ± 0.0500   ['0.450', '0.450', '0.550', '0.500', '0.550']
+INFO |   Selective acc (max prob)     0.5200 ± 0.0447   ['0.500', '0.450', '0.550', '0.550', '0.550']
+INFO |   Test meanK                   0.2651 ± 0.0060   ['0.265', '0.255', '0.270', '0.265', '0.270']
+INFO |   Test high-conflict rate      0.9263 ± 0.0616   ['0.920', '0.920', '1.000', '0.833', '0.958']
+INFO |   Test mean soft-gate          0.7642 ± 0.0259   ['0.758', '0.734', '0.796', '0.748', '0.786']
+INFO |   Test mean decision blend     0.3411 ± 0.0065   ['0.340', '0.333', '0.349', '0.337', '0.346']
+INFO |   Longitudinal (last-visit)    0.4887 ± 0.0865   ['0.400', '0.400', '0.560', '0.500', '0.583']
+INFO |   Longitudinal (Dempster)      0.4720 ± 0.0582   ['0.400', '0.440', '0.520', '0.458', '0.542']
+INFO |   Val accuracy (selected)      0.3867 ± 0.3571   ['0.000', '0.600', '0.733', '0.000', '0.600']
+INFO |   Val macro-F1 (selected)      0.3586 ± 0.3295   ['0.000', '0.579', '0.658', '0.000', '0.556']
+INFO |   Per-class F1 (test):
+INFO |     CN     0.6108 ± 0.1506   ['0.381', '0.538', '0.692', '0.692', '0.750']
+INFO |     MCI    0.3542 ± 0.0662   ['0.444', '0.333', '0.400', '0.308', '0.286']
+INFO |     AD     0.3261 ± 0.2278   ['0.364', '0.000', '0.444', '0.222', '0.600']
+INFO | ----------------------------------------------------------------------------
+  Baselines on identical folds (macro-F1 mean ± std; paired fold Δ = model − baseline)
+INFO |     logreg   0.3442 ± 0.1278   Δ=+0.0862   model ≥ baseline in 4/5 folds
+INFO |     rf       0.4249 ± 0.0939   Δ=+0.0055   model ≥ baseline in 3/5 folds
+INFO | ----------------------------------------------------------------------------
+  Pooled out-of-fold macro-F1, bootstrap 95% CI over subjects
+INFO |     model    0.4441  [0.350, 0.538]
+INFO |     logreg   0.3577  [0.274, 0.440]   Δ(model−logreg)=+0.0865 CI [-0.010, +0.181]  P(Δ≤0)=0.035
+INFO |     rf       0.4395  [0.350, 0.533]   Δ(model−rf)=+0.0046 CI [-0.040, +0.047]  P(Δ≤0)=0.410
+INFO | ============================================================================
+INFO | Report test metrics only; validation numbers are for early stopping. Tune hyperparameters on validation, never on these test folds.
+INFO |
+
+#### FULL RUN 02
+INFO | Device: cuda | dataset=oasis3 | ablation=full sources=['clinical', 'ct', 'mri', 'pet'] | train_visits=last | views=['mtl'] | clinical=['Age', 'EDUC', 'MF', 'eTIV', 'nWBV'] model=ensemble | kappa=0.2 rule=pcr5 | clin_lr=0.0001 mri_lr=5e-05 | blend_max=0.4
+INFO | Dataset oasis3: 123 subjects | final-label counts ['CN', 'MCI', 'AD'] = [62, 42, 19]
+
+============================================================================
+SUBJECT-LEVEL CV SUMMARY — 5 fold(s)  (mean ± std)
+============================================================================
+INFO |   Test accuracy                0.4887 ± 0.0865   ['0.400', '0.400', '0.560', '0.500', '0.583']
+INFO |   Test macro-F1                0.4304 ± 0.1014   ['0.396', '0.291', '0.512', '0.407', '0.545']
+INFO |   Test balanced accuracy       0.4525 ± 0.1061   ['0.426', '0.306', '0.522', '0.425', '0.583']
+INFO |   Test macro AUROC             0.6581 ± 0.0757   ['0.661', '0.549', '0.665', '0.653', '0.762']
+INFO |   Test Brier                   0.5931 ± 0.0386   ['0.600', '0.652', '0.588', '0.580', '0.546']
+INFO |   Test ECE                     0.1403 ± 0.0674   ['0.158', '0.098', '0.084', '0.110', '0.250']
+INFO |   Selective acc (Pl−Bel)       0.5000 ± 0.0500   ['0.450', '0.450', '0.550', '0.500', '0.550']
+INFO |   Selective acc (max prob)     0.5200 ± 0.0447   ['0.500', '0.450', '0.550', '0.550', '0.550']
+INFO |   Test meanK                   0.2646 ± 0.0061   ['0.263', '0.255', '0.270', '0.265', '0.270']
+INFO |   Test high-conflict rate      0.9263 ± 0.0616   ['0.920', '0.920', '1.000', '0.833', '0.958']
+INFO |   Test mean soft-gate          0.7636 ± 0.0262   ['0.756', '0.734', '0.796', '0.747', '0.786']
+INFO |   Test mean decision blend     0.3409 ± 0.0065   ['0.339', '0.333', '0.349', '0.337', '0.346']
+INFO |   Longitudinal (last-visit)    0.4887 ± 0.0865   ['0.400', '0.400', '0.560', '0.500', '0.583']
+INFO |   Longitudinal (Dempster)      0.4803 ± 0.0587   ['0.400', '0.440', '0.520', '0.500', '0.542']
+INFO |   Val accuracy (selected)      0.6000 ± 0.0943   ['0.600', '0.600', '0.733', '0.467', '0.600']
+INFO |   Val macro-F1 (selected)      0.5154 ± 0.1210   ['0.425', '0.579', '0.658', '0.359', '0.556']
+INFO |   Per-class F1 (test):
+INFO |     CN     0.6108 ± 0.1506   ['0.381', '0.538', '0.692', '0.692', '0.750']
+INFO |     MCI    0.3542 ± 0.0662   ['0.444', '0.333', '0.400', '0.308', '0.286']
+INFO |     AD     0.3261 ± 0.2278   ['0.364', '0.000', '0.444', '0.222', '0.600']
+INFO | ----------------------------------------------------------------------------
+  Baselines on identical folds (macro-F1 mean ± std; paired fold Δ = model − baseline)
+INFO |     logreg   0.3442 ± 0.1278   Δ=+0.0862   model ≥ baseline in 4/5 folds
+INFO |     rf       0.4249 ± 0.0939   Δ=+0.0055   model ≥ baseline in 3/5 folds
+INFO | ----------------------------------------------------------------------------
+  Pooled out-of-fold macro-F1, bootstrap 95% CI over subjects
+INFO |     model    0.4441  [0.350, 0.538]
+INFO |     logreg   0.3577  [0.274, 0.440]   Δ(model−logreg)=+0.0865 CI [-0.010, +0.181]  P(Δ≤0)=0.035
+INFO |     rf       0.4395  [0.350, 0.533]   Δ(model−rf)=+0.0046 CI [-0.040, +0.047]  P(Δ≤0)=0.410
+INFO | ============================================================================
+INFO | Report test metrics only; validation numbers are for early stopping. Tune hyperparameters on validation, never on these test folds.
+INFO |

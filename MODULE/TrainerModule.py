@@ -35,6 +35,8 @@ def build_param_groups(model: DSSNMMF) -> List[dict]:
     all_params = _trainable(model.parameters())
     if not all_params:
         return []
+    if imaging and not model.use_clinical:
+        return [{'params': all_params, 'lr': cfg.STANDALONE_IMAGING_LR}]
     if not (imaging and model.use_clinical) or getattr(model, 'uses_ensemble', False):
         lr = cfg.LEARNING_RATE if imaging else cfg.CLINICAL_LR
         return [{'params': all_params, 'lr': lr}]
@@ -53,6 +55,29 @@ def build_param_groups(model: DSSNMMF) -> List[dict]:
 def _model_kwargs(batch: dict, device: torch.device) -> dict:
     keys = ('mri', 'pet', 'ct', 'clinical', 'has_pet', 'has_ct')
     return {k: batch[k].to(device) for k in keys if k in batch}
+
+
+def _imaging_encoder_modules(model: DSSNMMF) -> List:
+    """SNN encoders only (not DS evidence heads or clinical)."""
+    mods = []
+    for name in ('shared_encoder', 'pet_encoder', 'ct_encoder'):
+        m = getattr(model, name, None)
+        if m is not None:
+            mods.append(m)
+    encoders = getattr(model, 'encoders', None)
+    if encoders is not None:
+        mods.append(encoders)
+    return mods
+
+
+def set_imaging_encoders_trainable(model: DSSNMMF, trainable: bool) -> int:
+    """Toggle requires_grad on imaging SNN encoders. Returns parameter count touched."""
+    n = 0
+    for mod in _imaging_encoder_modules(model):
+        for p in mod.parameters():
+            p.requires_grad = trainable
+            n += p.numel()
+    return n
 
 
 class Trainer:
@@ -167,9 +192,9 @@ class Trainer:
         pred_cols, label_cols = int((cm.sum(axis=0) > 0).sum()), int((cm.sum(axis=1) > 0).sum())
         if cfg.CKPT_REQUIRE_ALL_CLASSES and label_cols >= cfg.NUM_CLASSES and pred_cols < cfg.NUM_CLASSES:
             return f"missing class on val (pred_cols={pred_cols}/{cfg.NUM_CLASSES})"
-        gap = val['macro_f1'] - train_f1
-        if gap > cfg.CKPT_MAX_VAL_TRAIN_GAP:
-            return f"val−train F1 gap {gap:.3f} > {cfg.CKPT_MAX_VAL_TRAIN_GAP:.3f}"
+        overfit = train_f1 - val['macro_f1']
+        if overfit > cfg.CKPT_MAX_OVERFIT_GAP:
+            return f"train−val F1 gap {overfit:.3f} > {cfg.CKPT_MAX_OVERFIT_GAP:.3f}"
         return None
 
     def fit(self, train_loader: DataLoader, val_loader: DataLoader, save_path: str = "ds_snn_mf_best.pt",
@@ -184,15 +209,33 @@ class Trainer:
 
         history: List[Dict] = []
         warmup, stale = cfg.CHECKPOINT_WARMUP, 0
+        fallback_f1, fallback_acc, fallback_score = -1.0, 0.0, -1.0
+        fallback_state = None
+        freeze_epochs = max(int(getattr(cfg, 'FREEZE_ENCODER_EPOCHS', 0) or 0), 0)
+        imaging = self.model.use_mri or self.model.use_pet or self.model.use_ct
+        encoders_frozen = False
+        if freeze_epochs > 0 and self.model.use_clinical and imaging:
+            n = set_imaging_encoders_trainable(self.model, False)
+            encoders_frozen = n > 0
+            if encoders_frozen:
+                log.info(f"  Frozen imaging encoders for first {freeze_epochs} epoch(s) "
+                         f"({n:,} params); DS heads remain trainable.")
         log.info(f"Training on {self.device} | {cfg.NUM_EPOCHS} epochs (checkpoint warmup={warmup}, "
                  f"min_epochs={cfg.MIN_EPOCHS}, patience={cfg.PATIENCE})")
 
         for epoch in range(1, cfg.NUM_EPOCHS + 1):
+            if encoders_frozen and epoch == freeze_epochs + 1:
+                n = set_imaging_encoders_trainable(self.model, True)
+                encoders_frozen = False
+                log.info(f"  Unfroze imaging encoders at epoch {epoch} ({n:,} params).")
             t0 = time.time()
             train = self.train_epoch(train_loader, epoch)
             verbose = epoch == 1 or epoch % verbose_every == 0 or epoch == cfg.NUM_EPOCHS
             val = self.evaluate(val_loader, verbose=verbose)
             score = self._score(train['f1'], val)
+            if val['macro_f1'] > fallback_f1:
+                fallback_f1, fallback_acc, fallback_score = val['macro_f1'], val['acc'], score
+                fallback_state = {k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()}
 
             if epoch >= warmup:
                 reason = self._reject_reason(train['f1'], val)
@@ -221,8 +264,15 @@ class Trainer:
                 break
 
         if self.best_score < 0:  # no epoch passed the checkpoint rules
-            self._save_checkpoint(save_path)
-            log.warning("No checkpoint saved during selection — wrote final weights.")
+            if fallback_state is not None:
+                self.model.load_state_dict(fallback_state)
+                self.best_score, self.best_val_f1, self.best_val_acc = fallback_score, fallback_f1, fallback_acc
+                self._save_checkpoint(save_path)
+                log.warning("Every epoch was rejected by the checkpoint gate — "
+                            f"wrote the best validation macro-F1 weights (val_f1={fallback_f1:.4f}).")
+            else:
+                self._save_checkpoint(save_path)
+                log.warning("No checkpoint saved during selection — wrote final weights.")
         return history
 
 

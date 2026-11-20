@@ -91,6 +91,23 @@ def _clinical_xy(sequences: Sequences, visits: str) -> Tuple[np.ndarray, np.ndar
 
 def run_split(data: Dict[str, Sequences], device: torch.device, ckpt_path: str) -> Tuple[dict, Predictions]:
     """Train on ``data['train']``, select on val, evaluate once on test."""
+    imaging_only = not cfg.uses('clinical') and any(cfg.uses(s) for s in ('mri', 'pet', 'ct'))
+    saved_schedule = None
+    if imaging_only:
+        saved_schedule = (cfg.ENCODER_DROPOUT, cfg.FOCAL_GAMMA, cfg.USE_LOSS_CLASS_WEIGHTS)
+        cfg.ENCODER_DROPOUT = 0.10
+        cfg.FOCAL_GAMMA = 1.0
+        cfg.USE_LOSS_CLASS_WEIGHTS = False
+        log.info(f"  Imaging-only schedule: lr={cfg.STANDALONE_IMAGING_LR} dropout=0.10 "
+                 "focal_gamma=1.0 loss_class_weights=False")
+    try:
+        return _run_split(data, device, ckpt_path)
+    finally:
+        if saved_schedule is not None:
+            cfg.ENCODER_DROPOUT, cfg.FOCAL_GAMMA, cfg.USE_LOSS_CLASS_WEIGHTS = saved_schedule
+
+
+def _run_split(data: Dict[str, Sequences], device: torch.device, ckpt_path: str) -> Tuple[dict, Predictions]:
     train_loader, val_loader, test_loader, long_loader, weights, counts = build_loaders(data)
     model = DSSNMMF()
     if model.uses_ensemble:

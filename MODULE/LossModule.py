@@ -85,6 +85,16 @@ class DSSNNLoss(nn.Module):
         self.current_epoch = epoch
 
     def forward(self, out: Dict[str, Tensor], labels: Tensor) -> Dict[str, Tensor]:
+        mask = out.get('train_mask')
+        if mask is not None:
+            mask = mask.reshape(-1).to(device=labels.device, dtype=torch.bool)
+            if mask.shape[0] == labels.shape[0] and not bool(mask.any()):
+                zero = out['aux_logits'].sum() * 0.0
+                return {k: zero for k in ('total', 'ce', 'aux', 'ds', 'conflict', 'ign')}
+            if mask.shape[0] == labels.shape[0] and not bool(mask.all()):
+                labels = labels[mask]
+                out = {k: (v[mask] if torch.is_tensor(v) and v.shape[:1] == mask.shape else v)
+                       for k, v in out.items()}
         m_fused = out['m_fused']
         w, gamma, smooth = self.class_weights, cfg.FOCAL_GAMMA, cfg.LABEL_SMOOTHING
         L_ce = focal_ce_from_probs(out['decision'], labels, w, gamma, smooth)

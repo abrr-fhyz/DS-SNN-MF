@@ -60,7 +60,7 @@ Check the smoke test output (`data/oasis3/processed_v5/<session>/t1.nii.gz`) vis
 
 ## Training choices
 
-OASIS-3 defaults to `TRAIN_VISITS='all'`: every paired visit is a sample, evaluation stays on each subject's last visit, and splits stay subject-level. Compare against `--train-visits last` before relying on it. `--ablation` is `full` or a plus-separated subset of `mri`, `pet`, `ct`, `clinical`.
+OASIS-3 defaults to `train_visits='last'`: one sample per training subject, evaluation on each subject's last visit, and splits stay subject-level. `--train-visits all` uses every paired visit. `--ablation` is `full` or a plus-separated subset of `mri`, `pet`, `ct`, `clinical`. Imaging ablations with no clinical source train a classifier on the encoder rather than deciding by BetP; see `docs/Pipeline.md`.
 
 ## Tuning discipline
 
