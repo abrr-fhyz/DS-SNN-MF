@@ -104,9 +104,9 @@ class Config:
     LIF_THRESHOLD    = 1.0
     SURROGATE_ALPHA  = 4.0
     SNN_INPUT_CODING = 'direct'
-    ENCODER_CHANNELS = (16, 32, 64)
+    ENCODER_CHANNELS = (8, 16, 32)
     ENCODER_DROPOUT  = 0.40
-    VIEW_FEAT_DIM    = 64
+    VIEW_FEAT_DIM    = 32
     SHARE_MRI_ENCODER = True
     SNN_BLOCKS_PER_STAGE = 1
     FREEZE_ENCODER_EPOCHS = 5   # train DS heads only, then unfreeze SNNs

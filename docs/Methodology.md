@@ -8,16 +8,16 @@ Concise technical notes on the honest evaluation pipeline, leakage controls, the
 
 **Task.** 3-class diagnosis **CN / MCI / AD** from OASIS-2 longitudinal T1 MRI + tabular clinical features. Labels come from per-visit **CDR** (0 → CN, 0.5 → MCI, ≥1 → AD). Primary target = **final-visit** class.
 
-**Protocol.** Subject-level **5-fold stratified CV** (`SPLIT_SEED`). Per fold: test = fold \(i\); remaining subjects → stratified train / val (~15% val). Training uses **last visit only** per subject (`CrossSectionalWrapper`), matching the RF subject-final-visit baseline.
+**Protocol.** Subject-level **5-fold stratified CV** (`SPLIT_SEED`). Per fold: test = fold $i$; remaining subjects → stratified train / val (~15% val). Training uses **last visit only** per subject (`CrossSectionalWrapper`), matching the RF subject-final-visit baseline.
 
 **Model (`DSSNMMF`).**
 
 | Branch | Encoder | Output |
 |--------|---------|--------|
-| MRI | Shared 3D SNN → evidential head | BBA(s) over \(\Theta=\{CN,MCI,AD\}\) |
+| MRI | Shared 3D SNN → evidential head | BBA(s) over $\Theta=\{CN,MCI,AD\}$ |
 | Clinical | MLP → evidential head | One BBA |
 | Fusion | Conflict-aware Dempster / Yager | Fused BBA → Bel, Pl, BetP |
-| Decision | Blend of BetP and clinical-only aux softmax | \(\hat{y} = \arg\max[(1-\alpha)\mathrm{BetP} + \alpha\,p_{\mathrm{aux}}]\) |
+| Decision | Blend of BetP and clinical-only aux softmax | $\hat{y} = \arg\max\left[(1-\alpha)\,\mathrm{BetP} + \alpha\,p_{\mathrm{aux}}\right]$ |
 
 Ablations: `full` | `clinical` | `mri` (`config.ABLATION`).
 
@@ -39,23 +39,23 @@ Ablations: `full` | `clinical` | `mri` (`config.ABLATION`).
 | **Cross-subject intensity leak** | Percentile clip / [0,1] map is **per-volume** (brain mask of that scan) | `intensity_normalise` in `OtherModules/mri_preprocess.py` |
 | **Optimistic protocol** | Contrast only: `OtherModules/leaky_demo.py` deliberately adds CDR/MMSE to show >90% is trivial under label leak | Not used for primary metrics |
 
-**Features used:** `Age, EDUC, SES, eTIV, nWBV, ASF, MF`.  
+**Features used:** `Age, EDUC, SES, eTIV, nWBV, ASF, MF`.
 `eTIV` / `nWBV` / `ASF` are imaging-derived biomarkers (not CDR). They can overlap information with the MRI branch; that is modality redundancy, not label leakage.
 
 ---
 
 ## 3. How the SNN is used
 
-**Role.** Map one MRI view (currently whole-brain 64³ after crop/resize) to a feature vector \(F^{\mathrm{mri}}\in\mathbb{R}^{64}\), then to an MRI BBA. Clinical features use an MLP, not the SNN.
+**Role.** Map one MRI view (currently whole-brain 64³ after crop/resize) to a feature vector $F^{\mathrm{mri}}\in\mathbb{R}^{64}$, then to an MRI BBA. Clinical features use an MLP, not the SNN.
 
 **Cell.** Parametric LIF (**PLIF**): learnable decay and threshold; binary spikes via **arctan surrogate** for backprop.
 
 **Architecture (`SNN3DEncoder`).**
 
 1. Stem: Conv3D → GroupNorm → PLIF (analog volume → spikes).
-2. Stages: spike downsample + SEW-ADD residual blocks; channels `(16, 32, 64)`.
-3. Unroll **\(T=8\)** timesteps with membrane carried across steps.
-4. AdaptiveAvgPool → learnable softmax weights over time → BN → Linear → \(F^{\mathrm{mri}}\).
+2. Stages: spike downsample + SEW-ADD residual blocks; channels `(8, 16, 32)`.
+3. Unroll $T=8$ timesteps with membrane carried across steps.
+4. AdaptiveAvgPool → learnable softmax weights over time → BN → Linear → $F^{\mathrm{mri}}$.
 
 **Coding.** Default `SNN_INPUT_CODING='direct'` (same intensity each step; dynamics come from LIF). Optional Bernoulli rate coding.
 
@@ -65,35 +65,44 @@ Ablations: `full` | `clinical` | `mri` (`config.ABLATION`).
 
 ## 4. How Dempster–Shafer is used
 
-**Frame.** \(\Theta=\{CN,MCI,AD\}\). Mass vector length 8: \(\emptyset\), singletons, pairs (unused here), \(\Theta\).
+**Frame.** $\Theta=\{CN,MCI,AD\}$. Mass vector length 8: $\emptyset$, singletons, pairs (unused here), $\Theta$.
 
 **BBA from features (`DSEvidenceLayer`).** Subjective-logic / Dirichlet-style head:
 
-\[
-e_c=\mathrm{softplus}(\mathrm{head}(F)),\quad
-S=\sum_c e_c+|\Theta|,\quad
-m(\{c\})=e_c/S,\quad
-m(\Theta)=|\Theta|/S
-\]
+$$
+e_c=\mathrm{softplus}\big(\mathrm{head}(F)\big)_c,\qquad
+S=\sum_c e_c+\lvert\Theta\rvert,\qquad
+m(\{c\})=\frac{e_c}{S},\qquad
+m(\Theta)=\frac{\lvert\Theta\rvert}{S}
+$$
 
 Evidence is scaled/capped (`MRI_EVIDENCE_SCALE`, `MRI_EVIDENCE_CAP`) so weak MRI stays near-vacuous.
 
 **Within-visit fusion.** Sources ordered clinical-first (if enabled), then MRI view BBAs. Pairwise combination via **`ConflictDetectionModule`**:
 
-- Conflict \(K\) from disjoint focal elements.
-- Soft gate \(g=\sigma(\gamma(K-\kappa))\).
-- Output \(= g\cdot m_{\mathrm{Yager}}+(1-g)\cdot m_{\mathrm{Dempster}}\)  
-  (Yager sends conflict mass to \(\Theta\) when sources disagree).
+- Conflict $K$ from disjoint focal elements.
+- Soft gate $g=\sigma\big(\gamma(K-\kappa)\big)$.
+- Output:
+
+$$
+m_{\mathrm{fused}} = g\cdot m_{\mathrm{Yager}} + (1-g)\cdot m_{\mathrm{Dempster}}
+$$
+
+  (Yager sends conflict mass to $\Theta$ when sources disagree).
 
 From the fused BBA: **Bel**, **Pl**, **BetP** (pignistic).
 
-**Decision.**  
-\(\mathrm{decision}=(1-\texttt{DECISION\_BLEND})\cdot\mathrm{BetP}+\texttt{DECISION\_BLEND}\cdot p_{\mathrm{aux}}\),  
-with aux = clinical features only when `AUX_CLINICAL_ONLY=True`.
+**Decision.**
+
+$$
+\mathrm{decision}=(1-\mathrm{BLEND})\cdot\mathrm{BetP}+\mathrm{BLEND}\cdot p_{\mathrm{aux}}
+$$
+
+where $\mathrm{BLEND}$ is `DECISION_BLEND`, and aux = clinical features only when `AUX_CLINICAL_ONLY=True`.
 
 Imaging ablations that do not include clinical are not pure BetP. They train a linear head on the spiking features and take its softmax as the decision. See `docs/Pipeline.md`.
 
-**Across visits (eval).** `TemporalAccumulator` starts from vacuous \(m(\Theta)=1\) and sequentially Dempster-combines (Yager) per-visit fused BBAs; reported alongside last-visit accuracy. Primary paper numbers remain cross-sectional last-visit test metrics.
+**Across visits (eval).** `TemporalAccumulator` starts from vacuous $m(\Theta)=1$ and sequentially Dempster-combines (Yager) per-visit fused BBAs; reported alongside last-visit accuracy. Primary paper numbers remain cross-sectional last-visit test metrics.
 
 ---
 
